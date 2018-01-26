@@ -1001,6 +1001,9 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
 			resource_size_t size, resource_size_t align,
 			bool fb_overlap_ok);
 
+int vmbus_cpu_number_to_vp_number(int cpu_number);
+u64 hv_do_hypercall(u64 control, void *input, void *output);
+
 /**
  * VMBUS_DEVICE - macro used to describe a specific hyperv vmbus device
  *
@@ -1153,6 +1156,17 @@ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
 	.guid = { \
 			0x3d, 0xaf, 0x2e, 0x8c, 0xa7, 0x32, 0x09, 0x4b, \
 			0xab, 0x99, 0xbd, 0x1f, 0x1c, 0x86, 0xb5, 0x01 \
+		}
+
+/*
+ * PCI Express Pass Through
+ * {44C4F61D-4444-4400-9D52-802E27EDE19F}
+ */
+
+#define HV_PCIE_GUID \
+	.guid = { \
+			0x44, 0xc4, 0xf6, 0x1d, 0x44, 0x44, 0x44, 0x00, \
+			0x9d, 0x52, 0x80, 0x2e, 0x27, 0xed, 0xe1, 0x9f \
 		}
 
 /*

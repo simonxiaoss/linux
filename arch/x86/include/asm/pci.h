@@ -20,6 +20,9 @@ struct pci_sysdata {
 #ifdef CONFIG_X86_64
 	void		*iommu;		/* IOMMU private data */
 #endif
+#ifdef CONFIG_PCI_MSI_IRQ_DOMAIN
+	void            *fwnode;        /* IRQ domain for MSI assignment */
+#endif
 };
 
 extern int pci_routeirq;
