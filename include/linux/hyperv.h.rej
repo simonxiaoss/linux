@@ -1,0 +1,26 @@
+--- include/linux/hyperv.h
++++ include/linux/hyperv.h
+@@ -996,11 +996,23 @@ int __must_check __vmbus_driver_register(struct hv_driver *hv_driver,
+ 					 const char *mod_name);
+ void vmbus_driver_unregister(struct hv_driver *hv_driver);
+ 
++static inline const char *vmbus_dev_name(const struct hv_device *device_obj)
++{
++	const struct kobject *kobj = &device_obj->device.kobj;
++
++	return kobj->name;
++}
++
+ int vmbus_allocate_mmio(struct resource **new, struct hv_device *device_obj,
+ 			resource_size_t min, resource_size_t max,
+ 			resource_size_t size, resource_size_t align,
+ 			bool fb_overlap_ok);
+ 
++void vmbus_free_mmio(resource_size_t start, resource_size_t size);
++
++int vmbus_cpu_number_to_vp_number(int cpu_number);
++u64 hv_do_hypercall(u64 control, void *input, void *output);
++
+ /**
+  * VMBUS_DEVICE - macro used to describe a specific hyperv vmbus device
+  *
