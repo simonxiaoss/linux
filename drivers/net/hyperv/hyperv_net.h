@@ -667,8 +667,6 @@ struct net_device_context {
 	struct work_struct work;
 	u32 msg_enable; /* debug level */
 
-	/* struct garp_wrk gwrk; */
-
 	struct netvsc_stats __percpu *tx_stats;
 	struct netvsc_stats __percpu *rx_stats;
 
@@ -676,8 +674,8 @@ struct net_device_context {
 	u8 duplex;
 	u32 speed;
 
-	/* State to manage the associated VF interface. */
-	/* struct net_device *vf_netdev; */
+	struct work_struct vf_takeover;
+	struct work_struct vf_notify;
 };
 
 /* Per netvsc device */
@@ -748,7 +746,8 @@ struct netvsc_device {
 	bool vf_inject;
 	atomic_t open_cnt;
 
-	struct net_device *vf_netdev;
+	struct net_device __rcu *vf_netdev;
+	struct work_struct vf_takeover;
 	atomic_t vf_use_cnt;
 };
 

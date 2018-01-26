@@ -97,7 +97,7 @@ static irq_hw_number_t pci_msi_get_hwirq(struct msi_domain_info *info,
 }
 
 int pci_msi_prepare(struct irq_domain *domain, struct device *dev,
-			   int nvec, msi_alloc_info_t *arg)
+		    int nvec, msi_alloc_info_t *arg)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
 	struct msi_desc *desc = first_pci_msi_entry(pdev);

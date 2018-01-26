@@ -200,6 +200,8 @@ int hv_init(void)
 	void *virtaddr = NULL;
 	void *va_tsc = NULL;
 
+	hyperv_init();
+
 	memset(hv_context.synic_event_page, 0, sizeof(void *) * NR_CPUS);
 	memset(hv_context.synic_message_page, 0,
 	       sizeof(void *) * NR_CPUS);
@@ -555,6 +557,8 @@ void hv_synic_init(void *arg)
 	wrmsrl(HV_X64_MSR_SCONTROL, sctrl.as_uint64);
 
 	hv_context.synic_initialized = true;
+
+	hv_cpu_init(cpu);
 
 	/*
 	 * Setup the mapping between Hyper-V's notion
