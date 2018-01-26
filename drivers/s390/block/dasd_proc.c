@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Author(s)......: Holger Smolinski <Holger.Smolinski@de.ibm.com>
  *		    Horst Hummel <Horst.Hummel@de.ibm.com>
@@ -21,7 +20,7 @@
 #include <linux/proc_fs.h>
 
 #include <asm/debug.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 /* This is ugly... */
 #define PRINTK_HEADER "dasd_proc:"
@@ -91,7 +90,7 @@ dasd_devices_show(struct seq_file *m, void *v)
 			seq_printf(m, "n/f	 ");
 		else
 			seq_printf(m,
-				   "at blocksize: %u, %lu blocks, %lu MB",
+				   "at blocksize: %d, %lld blocks, %lld MB",
 				   block->bp_block, block->blocks,
 				   ((block->bp_block >> 9) *
 				    block->blocks) >> 11);
@@ -323,12 +322,13 @@ static ssize_t dasd_stats_proc_write(struct file *file,
 	return user_len;
 out_parse_error:
 	rc = -EINVAL;
-	pr_warn("%s is not a supported value for /proc/dasd/statistics\n", str);
+	pr_warning("%s is not a supported value for /proc/dasd/statistics\n",
+		str);
 out_error:
 	vfree(buffer);
 	return rc;
 #else
-	pr_warn("/proc/dasd/statistics: is not activated in this kernel\n");
+	pr_warning("/proc/dasd/statistics: is not activated in this kernel\n");
 	return user_len;
 #endif				/* CONFIG_DASD_PROFILE */
 }

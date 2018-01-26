@@ -47,6 +47,8 @@ extern void unit_pci_init(void);
 #define PCIBIOS_MIN_IO		0xBE000004
 #define PCIBIOS_MIN_MEM		0xB8000000
 
+void pcibios_set_master(struct pci_dev *dev);
+
 /* Dynamic DMA mapping stuff.
  * i386 has everything mapped statically.
  */
@@ -56,6 +58,8 @@ extern void unit_pci_init(void);
 #include <linux/scatterlist.h>
 #include <linux/string.h>
 #include <asm/io.h>
+
+struct pci_dev;
 
 /* The PCI address space does equal the physical memory
  * address space.  The networking and block device layers use
@@ -70,9 +74,14 @@ static inline int pci_controller_num(struct pci_dev *dev)
 }
 
 #define HAVE_PCI_MMAP
-#define ARCH_GENERIC_PCI_MMAP_RESOURCE
+extern int pci_mmap_page_range(struct pci_dev *dev, struct vm_area_struct *vma,
+			       enum pci_mmap_state mmap_state,
+			       int write_combine);
 
 #endif /* __KERNEL__ */
+
+/* implement the pci_ DMA API in terms of the generic device dma_ one */
+#include <asm-generic/pci-dma-compat.h>
 
 static inline int pci_get_legacy_ide_irq(struct pci_dev *dev, int channel)
 {

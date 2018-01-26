@@ -25,6 +25,7 @@
 #include <asm/dpmc.h>
 #include <asm/bfin_sdh.h>
 #include <linux/spi/ad7877.h>
+#include <net/dsa.h>
 
 /*
  * Name the Board for the /proc/cpuinfo

@@ -98,7 +98,7 @@ static struct stm32_clock_event_ddata clock_event_ddata = {
 	},
 };
 
-static int __init stm32_clockevent_init(struct device_node *np)
+static void __init stm32_clockevent_init(struct device_node *np)
 {
 	struct stm32_clock_event_ddata *data = &clock_event_ddata;
 	struct clk *clk;
@@ -130,15 +130,13 @@ static int __init stm32_clockevent_init(struct device_node *np)
 
 	data->base = of_iomap(np, 0);
 	if (!data->base) {
-		ret = -ENXIO;
 		pr_err("failed to map registers for clockevent\n");
 		goto err_iomap;
 	}
 
 	irq = irq_of_parse_and_map(np, 0);
 	if (!irq) {
-		ret = -EINVAL;
-		pr_err("%pOF: failed to get irq.\n", np);
+		pr_err("%s: failed to get irq.\n", np->full_name);
 		goto err_get_irq;
 	}
 
@@ -168,14 +166,14 @@ static int __init stm32_clockevent_init(struct device_node *np)
 	ret = request_irq(irq, stm32_clock_event_handler, IRQF_TIMER,
 			"stm32 clockevent", data);
 	if (ret) {
-		pr_err("%pOF: failed to request irq.\n", np);
+		pr_err("%s: failed to request irq.\n", np->full_name);
 		goto err_get_irq;
 	}
 
-	pr_info("%pOF: STM32 clockevent driver initialized (%d bits)\n",
-			np, bits);
+	pr_info("%s: STM32 clockevent driver initialized (%d bits)\n",
+			np->full_name, bits);
 
-	return ret;
+	return;
 
 err_get_irq:
 	iounmap(data->base);
@@ -184,7 +182,7 @@ err_iomap:
 err_clk_enable:
 	clk_put(clk);
 err_clk_get:
-	return ret;
+	return;
 }
 
-TIMER_OF_DECLARE(stm32, "st,stm32-timer", stm32_clockevent_init);
+CLOCKSOURCE_OF_DECLARE(stm32, "st,stm32-timer", stm32_clockevent_init);

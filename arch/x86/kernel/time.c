@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  *  Copyright (c) 1991,1992,1995  Linus Torvalds
  *  Copyright (c) 1994  Alan Modra
@@ -67,7 +66,7 @@ static struct irqaction irq0  = {
 	.name = "timer"
 };
 
-static void __init setup_default_timer_irq(void)
+void __init setup_default_timer_irq(void)
 {
 	if (!nr_legacy_irqs())
 		return;
@@ -85,11 +84,6 @@ void __init hpet_time_init(void)
 static __init void x86_late_time_init(void)
 {
 	x86_init.timers.timer_init();
-	/*
-	 * After PIT/HPET timers init, select and setup
-	 * the final interrupt mode for delivering IRQs.
-	 */
-	x86_init.irqs.intr_mode_init();
 	tsc_init();
 }
 

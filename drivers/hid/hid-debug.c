@@ -30,7 +30,7 @@
 
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
-#include <linux/sched/signal.h>
+#include <linux/sched.h>
 #include <linux/export.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
@@ -140,11 +140,9 @@ static const struct hid_usage_entry hid_usage_table[] = {
     {0, 0x03, "LightPen"},
     {0, 0x04, "TouchScreen"},
     {0, 0x05, "TouchPad"},
-    {0, 0x0e, "DeviceConfiguration"},
     {0, 0x20, "Stylus"},
     {0, 0x21, "Puck"},
     {0, 0x22, "Finger"},
-    {0, 0x23, "DeviceSettings"},
     {0, 0x30, "TipPressure"},
     {0, 0x31, "BarrelPressure"},
     {0, 0x32, "InRange"},
@@ -661,13 +659,13 @@ EXPORT_SYMBOL_GPL(hid_dump_device);
 /* enqueue string to 'events' ring buffer */
 void hid_debug_event(struct hid_device *hdev, char *buf)
 {
-	unsigned i;
+	int i;
 	struct hid_debug_list *list;
 	unsigned long flags;
 
 	spin_lock_irqsave(&hdev->debug_list_lock, flags);
 	list_for_each_entry(list, &hdev->debug_list, node) {
-		for (i = 0; buf[i]; i++)
+		for (i = 0; i < strlen(buf); i++)
 			list->hid_debug_buf[(list->tail + i) % HID_DEBUG_BUFSIZE] =
 				buf[i];
 		list->tail = (list->tail + i) % HID_DEBUG_BUFSIZE;

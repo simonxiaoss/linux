@@ -35,12 +35,10 @@ static inline int vlan_validate_qos_map(struct nlattr *attr)
 {
 	if (!attr)
 		return 0;
-	return nla_validate_nested(attr, IFLA_VLAN_QOS_MAX, vlan_map_policy,
-				   NULL);
+	return nla_validate_nested(attr, IFLA_VLAN_QOS_MAX, vlan_map_policy);
 }
 
-static int vlan_validate(struct nlattr *tb[], struct nlattr *data[],
-			 struct netlink_ext_ack *extack)
+static int vlan_validate(struct nlattr *tb[], struct nlattr *data[])
 {
 	struct ifla_vlan_flags *flags;
 	u16 id;
@@ -88,9 +86,8 @@ static int vlan_validate(struct nlattr *tb[], struct nlattr *data[],
 	return 0;
 }
 
-static int vlan_changelink(struct net_device *dev, struct nlattr *tb[],
-			   struct nlattr *data[],
-			   struct netlink_ext_ack *extack)
+static int vlan_changelink(struct net_device *dev,
+			   struct nlattr *tb[], struct nlattr *data[])
 {
 	struct ifla_vlan_flags *flags;
 	struct ifla_vlan_qos_mapping *m;
@@ -117,12 +114,10 @@ static int vlan_changelink(struct net_device *dev, struct nlattr *tb[],
 }
 
 static int vlan_newlink(struct net *src_net, struct net_device *dev,
-			struct nlattr *tb[], struct nlattr *data[],
-			struct netlink_ext_ack *extack)
+			struct nlattr *tb[], struct nlattr *data[])
 {
 	struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
 	struct net_device *real_dev;
-	unsigned int max_mtu;
 	__be16 proto;
 	int err;
 
@@ -143,25 +138,22 @@ static int vlan_newlink(struct net *src_net, struct net_device *dev,
 	vlan->vlan_proto = proto;
 	vlan->vlan_id	 = nla_get_u16(data[IFLA_VLAN_ID]);
 	vlan->real_dev	 = real_dev;
-	dev->priv_flags |= (real_dev->priv_flags & IFF_XMIT_DST_RELEASE);
 	vlan->flags	 = VLAN_FLAG_REORDER_HDR;
 
 	err = vlan_check_real_dev(real_dev, vlan->vlan_proto, vlan->vlan_id);
 	if (err < 0)
 		return err;
 
-	max_mtu = netif_reduces_vlan_mtu(real_dev) ? real_dev->mtu - VLAN_HLEN :
-						     real_dev->mtu;
 	if (!tb[IFLA_MTU])
-		dev->mtu = max_mtu;
-	else if (dev->mtu > max_mtu)
+		dev->mtu = real_dev->mtu;
+	else if (dev->mtu > real_dev->mtu)
 		return -EINVAL;
 
-	err = vlan_changelink(dev, tb, data, extack);
+	err = vlan_changelink(dev, tb, data);
 	if (err < 0)
 		return err;
 
-	return register_vlan_dev(dev, extack);
+	return register_vlan_dev(dev);
 }
 
 static inline size_t vlan_qos_map_size(unsigned int n)

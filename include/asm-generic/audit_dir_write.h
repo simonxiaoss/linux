@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifdef __NR_rename
 __NR_rename,
 #endif
@@ -30,7 +29,4 @@ __NR_unlinkat,
 __NR_renameat,
 __NR_linkat,
 __NR_symlinkat,
-#endif
-#ifdef __NR_renameat2
-__NR_renameat2,
 #endif

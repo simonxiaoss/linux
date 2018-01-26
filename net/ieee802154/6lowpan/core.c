@@ -54,14 +54,25 @@
 
 static int open_count;
 
-static const struct header_ops lowpan_header_ops = {
+static struct header_ops lowpan_header_ops = {
 	.create	= lowpan_header_create,
 };
 
+static struct lock_class_key lowpan_tx_busylock;
+static struct lock_class_key lowpan_netdev_xmit_lock_key;
+
+static void lowpan_set_lockdep_class_one(struct net_device *ldev,
+					 struct netdev_queue *txq,
+					 void *_unused)
+{
+	lockdep_set_class(&txq->_xmit_lock,
+			  &lowpan_netdev_xmit_lock_key);
+}
+
 static int lowpan_dev_init(struct net_device *ldev)
 {
-	netdev_lockdep_set_classes(ldev);
-
+	netdev_for_each_tx_queue(ldev, lowpan_set_lockdep_class_one, NULL);
+	ldev->qdisc_tx_busylock = &lowpan_tx_busylock;
 	return 0;
 }
 
@@ -81,21 +92,11 @@ static int lowpan_stop(struct net_device *dev)
 	return 0;
 }
 
-static int lowpan_neigh_construct(struct net_device *dev, struct neighbour *n)
-{
-	struct lowpan_802154_neigh *neigh = lowpan_802154_neigh(neighbour_priv(n));
-
-	/* default no short_addr is available for a neighbour */
-	neigh->short_addr = cpu_to_le16(IEEE802154_ADDR_SHORT_UNSPEC);
-	return 0;
-}
-
 static const struct net_device_ops lowpan_netdev_ops = {
 	.ndo_init		= lowpan_dev_init,
 	.ndo_start_xmit		= lowpan_xmit,
 	.ndo_open		= lowpan_open,
 	.ndo_stop		= lowpan_stop,
-	.ndo_neigh_construct    = lowpan_neigh_construct,
 };
 
 static void lowpan_setup(struct net_device *ldev)
@@ -107,12 +108,11 @@ static void lowpan_setup(struct net_device *ldev)
 
 	ldev->netdev_ops	= &lowpan_netdev_ops;
 	ldev->header_ops	= &lowpan_header_ops;
-	ldev->needs_free_netdev	= true;
+	ldev->destructor	= free_netdev;
 	ldev->features		|= NETIF_F_NETNS_LOCAL;
 }
 
-static int lowpan_validate(struct nlattr *tb[], struct nlattr *data[],
-			   struct netlink_ext_ack *extack)
+static int lowpan_validate(struct nlattr *tb[], struct nlattr *data[])
 {
 	if (tb[IFLA_ADDRESS]) {
 		if (nla_len(tb[IFLA_ADDRESS]) != IEEE802154_ADDR_LEN)
@@ -122,8 +122,7 @@ static int lowpan_validate(struct nlattr *tb[], struct nlattr *data[],
 }
 
 static int lowpan_newlink(struct net *src_net, struct net_device *ldev,
-			  struct nlattr *tb[], struct nlattr *data[],
-			  struct netlink_ext_ack *extack)
+			  struct nlattr *tb[], struct nlattr *data[])
 {
 	struct net_device *wdev;
 	int ret;
@@ -132,7 +131,8 @@ static int lowpan_newlink(struct net *src_net, struct net_device *ldev,
 
 	pr_debug("adding new link\n");
 
-	if (!tb[IFLA_LINK])
+	if (!tb[IFLA_LINK] ||
+	    !net_eq(dev_net(ldev), &init_net))
 		return -EINVAL;
 	/* find and hold wpan device */
 	wdev = dev_get_by_index(dev_net(ldev), nla_get_u32(tb[IFLA_LINK]));
@@ -148,7 +148,7 @@ static int lowpan_newlink(struct net *src_net, struct net_device *ldev,
 		return -EBUSY;
 	}
 
-	lowpan_802154_dev(ldev)->wdev = wdev;
+	lowpan_dev_info(ldev)->wdev = wdev;
 	/* Set the lowpan hardware address to the wpan hardware address. */
 	memcpy(ldev->dev_addr, wdev->dev_addr, IEEE802154_ADDR_LEN);
 	/* We need headroom for possible wpan_dev_hard_header call and tailroom
@@ -161,9 +161,9 @@ static int lowpan_newlink(struct net *src_net, struct net_device *ldev,
 				wdev->needed_headroom;
 	ldev->needed_tailroom = wdev->needed_tailroom;
 
-	ldev->neigh_priv_len = sizeof(struct lowpan_802154_neigh);
+	lowpan_netdev_setup(ldev, LOWPAN_LLTYPE_IEEE802154);
 
-	ret = lowpan_register_netdevice(ldev, LOWPAN_LLTYPE_IEEE802154);
+	ret = register_netdevice(ldev);
 	if (ret < 0) {
 		dev_put(wdev);
 		return ret;
@@ -175,18 +175,18 @@ static int lowpan_newlink(struct net *src_net, struct net_device *ldev,
 
 static void lowpan_dellink(struct net_device *ldev, struct list_head *head)
 {
-	struct net_device *wdev = lowpan_802154_dev(ldev)->wdev;
+	struct net_device *wdev = lowpan_dev_info(ldev)->wdev;
 
 	ASSERT_RTNL();
 
 	wdev->ieee802154_ptr->lowpan_dev = NULL;
-	lowpan_unregister_netdevice(ldev);
+	unregister_netdevice(ldev);
 	dev_put(wdev);
 }
 
 static struct rtnl_link_ops lowpan_link_ops __read_mostly = {
 	.kind		= "lowpan",
-	.priv_size	= LOWPAN_PRIV_SIZE(sizeof(struct lowpan_802154_dev)),
+	.priv_size	= LOWPAN_PRIV_SIZE(sizeof(struct lowpan_dev_info)),
 	.setup		= lowpan_setup,
 	.newlink	= lowpan_newlink,
 	.dellink	= lowpan_dellink,
@@ -209,7 +209,7 @@ static int lowpan_device_event(struct notifier_block *unused,
 	struct net_device *wdev = netdev_notifier_info_to_dev(ptr);
 
 	if (wdev->type != ARPHRD_IEEE802154)
-		return NOTIFY_DONE;
+		goto out;
 
 	switch (event) {
 	case NETDEV_UNREGISTER:
@@ -221,10 +221,11 @@ static int lowpan_device_event(struct notifier_block *unused,
 			lowpan_dellink(wdev->ieee802154_ptr->lowpan_dev, NULL);
 		break;
 	default:
-		return NOTIFY_DONE;
+		break;
 	}
 
-	return NOTIFY_OK;
+out:
+	return NOTIFY_DONE;
 }
 
 static struct notifier_block lowpan_dev_notifier = {

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -16,7 +15,11 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.gnu.org/licenses/gpl-2.0.html
+ * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
+ *
+ * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
+ * CA 95054 USA or visit www.sun.com if you need additional information or
+ * have any questions.
  *
  * GPL HEADER END
  */
@@ -24,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2015, Intel Corporation.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -44,9 +47,8 @@
 
 #define DEBUG_SUBSYSTEM S_LOG
 
-#include <llog_swab.h>
-#include <lustre_log.h>
-#include <obd_class.h>
+#include "../include/obd_class.h"
+#include "../include/lustre_log.h"
 #include "llog_internal.h"
 
 /*
@@ -74,6 +76,8 @@ static struct llog_handle *llog_alloc_handle(void)
  */
 static void llog_free_handle(struct llog_handle *loghandle)
 {
+	LASSERT(loghandle != NULL);
+
 	/* failed llog_init_handle */
 	if (!loghandle->lgh_hdr)
 		goto out;
@@ -82,7 +86,8 @@ static void llog_free_handle(struct llog_handle *loghandle)
 		LASSERT(list_empty(&loghandle->u.phd.phd_entry));
 	else if (loghandle->lgh_hdr->llh_flags & LLOG_F_IS_CAT)
 		LASSERT(list_empty(&loghandle->u.chd.chd_head));
-	kvfree(loghandle->lgh_hdr);
+	LASSERT(sizeof(*(loghandle->lgh_hdr)) == LLOG_CHUNK_SIZE);
+	kfree(loghandle->lgh_hdr);
 out:
 	kfree(loghandle);
 }
@@ -110,35 +115,24 @@ static int llog_read_header(const struct lu_env *env,
 	if (rc)
 		return rc;
 
-	if (!lop->lop_read_header)
+	if (lop->lop_read_header == NULL)
 		return -EOPNOTSUPP;
 
 	rc = lop->lop_read_header(env, handle);
 	if (rc == LLOG_EEMPTY) {
 		struct llog_log_hdr *llh = handle->lgh_hdr;
-		size_t len;
 
-		/* lrh_len should be initialized in llog_init_handle */
 		handle->lgh_last_idx = 0; /* header is record with index 0 */
 		llh->llh_count = 1;	 /* for the header record */
 		llh->llh_hdr.lrh_type = LLOG_HDR_MAGIC;
-		LASSERT(handle->lgh_ctxt->loc_chunk_size >= LLOG_MIN_CHUNK_SIZE);
-		llh->llh_hdr.lrh_len = handle->lgh_ctxt->loc_chunk_size;
-		llh->llh_hdr.lrh_index = 0;
+		llh->llh_hdr.lrh_len = llh->llh_tail.lrt_len = LLOG_CHUNK_SIZE;
+		llh->llh_hdr.lrh_index = llh->llh_tail.lrt_index = 0;
 		llh->llh_timestamp = ktime_get_real_seconds();
 		if (uuid)
 			memcpy(&llh->llh_tgtuuid, uuid,
 			       sizeof(llh->llh_tgtuuid));
 		llh->llh_bitmap_offset = offsetof(typeof(*llh), llh_bitmap);
-		/*
-		 * Since update llog header might also call this function,
-		 * let's reset the bitmap to 0 here
-		 */
-		len = llh->llh_hdr.lrh_len - llh->llh_bitmap_offset;
-		memset(LLOG_HDR_BITMAP(llh), 0, len - sizeof(llh->llh_tail));
-		ext2_set_bit(0, LLOG_HDR_BITMAP(llh));
-		LLOG_HDR_TAIL(llh)->lrt_len = llh->llh_hdr.lrh_len;
-		LLOG_HDR_TAIL(llh)->lrt_index = llh->llh_hdr.lrh_index;
+		ext2_set_bit(0, llh->llh_bitmap);
 		rc = 0;
 	}
 	return rc;
@@ -147,19 +141,15 @@ static int llog_read_header(const struct lu_env *env,
 int llog_init_handle(const struct lu_env *env, struct llog_handle *handle,
 		     int flags, struct obd_uuid *uuid)
 {
-	int chunk_size = handle->lgh_ctxt->loc_chunk_size;
-	enum llog_flag fmt = flags & LLOG_F_EXT_MASK;
 	struct llog_log_hdr	*llh;
 	int			 rc;
 
-	LASSERT(!handle->lgh_hdr);
+	LASSERT(handle->lgh_hdr == NULL);
 
-	LASSERT(chunk_size >= LLOG_MIN_CHUNK_SIZE);
-	llh = libcfs_kvzalloc(sizeof(*llh), GFP_NOFS);
+	llh = kzalloc(sizeof(*llh), GFP_NOFS);
 	if (!llh)
 		return -ENOMEM;
 	handle->lgh_hdr = llh;
-	handle->lgh_hdr_size = chunk_size;
 	/* first assign flags to use llog_client_ops */
 	llh->llh_flags = flags;
 	rc = llog_read_header(env, handle, uuid);
@@ -202,17 +192,15 @@ int llog_init_handle(const struct lu_env *env, struct llog_handle *handle,
 		LASSERT(list_empty(&handle->u.chd.chd_head));
 		INIT_LIST_HEAD(&handle->u.chd.chd_head);
 		llh->llh_size = sizeof(struct llog_logid_rec);
-		llh->llh_flags |= LLOG_F_IS_FIXSIZE;
 	} else if (!(flags & LLOG_F_IS_PLAIN)) {
 		CERROR("%s: unknown flags: %#x (expected %#x or %#x)\n",
 		       handle->lgh_ctxt->loc_obd->obd_name,
 		       flags, LLOG_F_IS_CAT, LLOG_F_IS_PLAIN);
 		rc = -EINVAL;
 	}
-	llh->llh_flags |= fmt;
 out:
 	if (rc) {
-		kvfree(llh);
+		kfree(llh);
 		handle->lgh_hdr = NULL;
 	}
 	return rc;
@@ -226,81 +214,59 @@ static int llog_process_thread(void *arg)
 	struct llog_log_hdr		*llh = loghandle->lgh_hdr;
 	struct llog_process_cat_data	*cd  = lpi->lpi_catdata;
 	char				*buf;
-	u64 cur_offset, tmp_offset;
-	int chunk_size;
+	__u64				 cur_offset = LLOG_CHUNK_SIZE;
+	__u64				 last_offset;
 	int				 rc = 0, index = 1, last_index;
 	int				 saved_index = 0;
 	int				 last_called_index = 0;
 
-	if (!llh)
-		return -EINVAL;
+	LASSERT(llh);
 
-	cur_offset = llh->llh_hdr.lrh_len;
-	chunk_size = llh->llh_hdr.lrh_len;
-	/* expect chunk_size to be power of two */
-	LASSERT(is_power_of_2(chunk_size));
-
-	buf = libcfs_kvzalloc(chunk_size, GFP_NOFS);
+	buf = kzalloc(LLOG_CHUNK_SIZE, GFP_NOFS);
 	if (!buf) {
 		lpi->lpi_rc = -ENOMEM;
 		return 0;
 	}
 
-	if (cd) {
+	if (cd != NULL) {
 		last_called_index = cd->lpcd_first_idx;
 		index = cd->lpcd_first_idx + 1;
 	}
-	if (cd && cd->lpcd_last_idx)
+	if (cd != NULL && cd->lpcd_last_idx)
 		last_index = cd->lpcd_last_idx;
 	else
-		last_index = LLOG_HDR_BITMAP_SIZE(llh) - 1;
+		last_index = LLOG_BITMAP_BYTES * 8 - 1;
 
 	while (rc == 0) {
-		unsigned int buf_offset = 0;
 		struct llog_rec_hdr *rec;
-		bool partial_chunk;
-		off_t chunk_offset;
 
 		/* skip records not set in bitmap */
 		while (index <= last_index &&
-		       !ext2_test_bit(index, LLOG_HDR_BITMAP(llh)))
+		       !ext2_test_bit(index, llh->llh_bitmap))
 			++index;
 
-		if (index > last_index)
+		LASSERT(index <= last_index + 1);
+		if (index == last_index + 1)
 			break;
-
+repeat:
 		CDEBUG(D_OTHER, "index: %d last_index %d\n",
 		       index, last_index);
-repeat:
+
 		/* get the buf with our target record; avoid old garbage */
-		memset(buf, 0, chunk_size);
+		memset(buf, 0, LLOG_CHUNK_SIZE);
+		last_offset = cur_offset;
 		rc = llog_next_block(lpi->lpi_env, loghandle, &saved_index,
-				     index, &cur_offset, buf, chunk_size);
+				     index, &cur_offset, buf, LLOG_CHUNK_SIZE);
 		if (rc)
 			goto out;
 
-		/*
-		 * NB: after llog_next_block() call the cur_offset is the
-		 * offset of the next block after read one.
-		 * The absolute offset of the current chunk is calculated
-		 * from cur_offset value and stored in chunk_offset variable.
-		 */
-		tmp_offset = cur_offset;
-		if (do_div(tmp_offset, chunk_size)) {
-			partial_chunk = true;
-			chunk_offset = cur_offset & ~(chunk_size - 1);
-		} else {
-			partial_chunk = false;
-			chunk_offset = cur_offset - chunk_size;
-		}
-
 		/* NB: when rec->lrh_len is accessed it is already swabbed
 		 * since it is used at the "end" of the loop and the rec
-		 * swabbing is done at the beginning of the loop.
-		 */
-		for (rec = (struct llog_rec_hdr *)(buf + buf_offset);
-		     (char *)rec < buf + chunk_size;
-		     rec = llog_rec_hdr_next(rec)) {
+		 * swabbing is done at the beginning of the loop. */
+		for (rec = (struct llog_rec_hdr *)buf;
+		     (char *)rec < buf + LLOG_CHUNK_SIZE;
+		     rec = (struct llog_rec_hdr *)((char *)rec + rec->lrh_len)) {
+
 			CDEBUG(D_OTHER, "processing rec 0x%p type %#x\n",
 			       rec, rec->lrh_type);
 
@@ -310,29 +276,15 @@ repeat:
 			CDEBUG(D_OTHER, "after swabbing, type=%#x idx=%d\n",
 			       rec->lrh_type, rec->lrh_index);
 
-			/*
-			 * for partial chunk the end of it is zeroed, check
-			 * for index 0 to distinguish it.
-			 */
-			if (partial_chunk && !rec->lrh_index) {
-				/* concurrent llog_add() might add new records
-				 * while llog_processing, check this is not
-				 * the case and re-read the current chunk
-				 * otherwise.
-				 */
-				if (index > loghandle->lgh_last_idx) {
-					rc = 0;
-					goto out;
-				}
-				CDEBUG(D_OTHER, "Re-read last llog buffer for new records, index %u, last %u\n",
-				       index, loghandle->lgh_last_idx);
-				/* save offset inside buffer for the re-read */
-				buf_offset = (char *)rec - (char *)buf;
-				cur_offset = chunk_offset;
-				goto repeat;
+			if (rec->lrh_index == 0) {
+				/* probably another rec just got added? */
+				rc = 0;
+				if (index <= loghandle->lgh_last_idx)
+					goto repeat;
+				goto out; /* no more records */
 			}
-
-			if (!rec->lrh_len || rec->lrh_len > chunk_size) {
+			if (rec->lrh_len == 0 ||
+			    rec->lrh_len > LLOG_CHUNK_SIZE) {
 				CWARN("invalid length %d in llog record for index %d/%d\n",
 				      rec->lrh_len,
 				      rec->lrh_index, index);
@@ -346,43 +298,37 @@ repeat:
 				continue;
 			}
 
-			if (rec->lrh_index != index) {
-				CERROR("%s: Invalid record: index %u but expected %u\n",
-				       loghandle->lgh_ctxt->loc_obd->obd_name,
-				       rec->lrh_index, index);
-				rc = -ERANGE;
-				goto out;
-			}
-
 			CDEBUG(D_OTHER,
 			       "lrh_index: %d lrh_len: %d (%d remains)\n",
 			       rec->lrh_index, rec->lrh_len,
-			       (int)(buf + chunk_size - (char *)rec));
+			       (int)(buf + LLOG_CHUNK_SIZE - (char *)rec));
 
 			loghandle->lgh_cur_idx = rec->lrh_index;
 			loghandle->lgh_cur_offset = (char *)rec - (char *)buf +
-						    chunk_offset;
+						    last_offset;
 
 			/* if set, process the callback on this record */
-			if (ext2_test_bit(index, LLOG_HDR_BITMAP(llh))) {
+			if (ext2_test_bit(index, llh->llh_bitmap)) {
 				rc = lpi->lpi_cb(lpi->lpi_env, loghandle, rec,
 						 lpi->lpi_cbdata);
 				last_called_index = index;
 				if (rc)
 					goto out;
+			} else {
+				CDEBUG(D_OTHER, "Skipped index %d\n", index);
 			}
 
-			/* exit if the last index is reached */
-			if (index >= last_index) {
+			/* next record, still in buffer? */
+			++index;
+			if (index > last_index) {
 				rc = 0;
 				goto out;
 			}
-			index++;
 		}
 	}
 
 out:
-	if (cd)
+	if (cd != NULL)
 		cd->lpcd_last_idx = last_called_index;
 
 	kfree(buf);
@@ -420,28 +366,27 @@ int llog_process_or_fork(const struct lu_env *env,
 	int		      rc;
 
 	lpi = kzalloc(sizeof(*lpi), GFP_NOFS);
-	if (!lpi)
+	if (!lpi) {
+		CERROR("cannot alloc pointer\n");
 		return -ENOMEM;
+	}
 	lpi->lpi_loghandle = loghandle;
 	lpi->lpi_cb	= cb;
 	lpi->lpi_cbdata    = data;
 	lpi->lpi_catdata   = catdata;
 
 	if (fork) {
-		struct task_struct *task;
-
 		/* The new thread can't use parent env,
-		 * init the new one in llog_process_thread_daemonize.
-		 */
+		 * init the new one in llog_process_thread_daemonize. */
 		lpi->lpi_env = NULL;
 		init_completion(&lpi->lpi_completion);
-		task = kthread_run(llog_process_thread_daemonize, lpi,
-				   "llog_process_thread");
-		if (IS_ERR(task)) {
-			rc = PTR_ERR(task);
+		rc = PTR_ERR(kthread_run(llog_process_thread_daemonize, lpi,
+					     "llog_process_thread"));
+		if (IS_ERR_VALUE(rc)) {
 			CERROR("%s: cannot start thread: rc = %d\n",
 			       loghandle->lgh_ctxt->loc_obd->obd_name, rc);
-			goto out_lpi;
+			kfree(lpi);
+			return rc;
 		}
 		wait_for_completion(&lpi->lpi_completion);
 	} else {
@@ -449,7 +394,6 @@ int llog_process_or_fork(const struct lu_env *env,
 		llog_process_thread(lpi);
 	}
 	rc = lpi->lpi_rc;
-out_lpi:
 	kfree(lpi);
 	return rc;
 }
@@ -472,13 +416,13 @@ int llog_open(const struct lu_env *env, struct llog_ctxt *ctxt,
 	LASSERT(ctxt);
 	LASSERT(ctxt->loc_logops);
 
-	if (!ctxt->loc_logops->lop_open) {
+	if (ctxt->loc_logops->lop_open == NULL) {
 		*lgh = NULL;
 		return -EOPNOTSUPP;
 	}
 
 	*lgh = llog_alloc_handle();
-	if (!*lgh)
+	if (*lgh == NULL)
 		return -ENOMEM;
 	(*lgh)->lgh_ctxt = ctxt;
 	(*lgh)->lgh_logops = ctxt->loc_logops;
@@ -505,7 +449,7 @@ int llog_close(const struct lu_env *env, struct llog_handle *loghandle)
 	rc = llog_handle2ops(loghandle, &lop);
 	if (rc)
 		goto out;
-	if (!lop->lop_close) {
+	if (lop->lop_close == NULL) {
 		rc = -EOPNOTSUPP;
 		goto out;
 	}

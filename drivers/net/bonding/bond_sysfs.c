@@ -24,7 +24,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/device.h>
-#include <linux/sched/signal.h>
+#include <linux/sched.h>
 #include <linux/fs.h>
 #include <linux/types.h>
 #include <linux/string.h>
@@ -42,6 +42,7 @@
 
 #include <net/bonding.h>
 
+#define to_dev(obj)	container_of(obj, struct device, kobj)
 #define to_bond(cd)	((struct bonding *)(netdev_priv(to_net_dev(cd))))
 
 /* "show" function for the bond_masters attribute.
@@ -480,7 +481,7 @@ static ssize_t bonding_show_mii_status(struct device *d,
 				       char *buf)
 {
 	struct bonding *bond = to_bond(d);
-	bool active = netif_carrier_ok(bond->dev);
+	bool active = !!rcu_access_pointer(bond->curr_active_slave);
 
 	return sprintf(buf, "%s\n", active ? "up" : "down");
 }
@@ -759,7 +760,7 @@ static struct attribute *per_bond_attrs[] = {
 	NULL,
 };
 
-static const struct attribute_group bonding_group = {
+static struct attribute_group bonding_group = {
 	.name = "bonding",
 	.attrs = per_bond_attrs,
 };

@@ -12,7 +12,6 @@
 #include <linux/pm.h>
 #include <linux/io.h>
 
-#include <asm/cpufeature.h>
 #include <asm/irqdomain.h>
 #include <asm/fixmap.h>
 #include <asm/hpet.h>
@@ -54,7 +53,7 @@ struct hpet_dev {
 	char				name[10];
 };
 
-static inline struct hpet_dev *EVT_TO_HPET_DEV(struct clock_event_device *evtdev)
+inline struct hpet_dev *EVT_TO_HPET_DEV(struct clock_event_device *evtdev)
 {
 	return container_of(evtdev, struct hpet_dev, evt);
 }
@@ -285,7 +284,7 @@ static void hpet_legacy_clockevent_register(void)
 	 * Start hpet with the boot cpu mask and make it
 	 * global after the IO_APIC has been initialized.
 	 */
-	hpet_clockevent.cpumask = cpumask_of(boot_cpu_data.cpu_index);
+	hpet_clockevent.cpumask = cpumask_of(smp_processor_id());
 	clockevents_config_and_register(&hpet_clockevent, hpet_freq,
 					HPET_MIN_PROG_DELTA, 0x7FFFFFFF);
 	global_clock_event = &hpet_clockevent;
@@ -345,10 +344,21 @@ static int hpet_shutdown(struct clock_event_device *evt, int timer)
 	return 0;
 }
 
-static int hpet_resume(struct clock_event_device *evt)
+static int hpet_resume(struct clock_event_device *evt, int timer)
 {
-	hpet_enable_legacy_int();
+	if (!timer) {
+		hpet_enable_legacy_int();
+	} else {
+		struct hpet_dev *hdev = EVT_TO_HPET_DEV(evt);
+
+		irq_domain_deactivate_irq(irq_get_irq_data(hdev->irq));
+		irq_domain_activate_irq(irq_get_irq_data(hdev->irq));
+		disable_hardirq(hdev->irq);
+		irq_set_affinity(hdev->irq, cpumask_of(hdev->cpu));
+		enable_irq(hdev->irq);
+	}
 	hpet_print_config();
+
 	return 0;
 }
 
@@ -406,7 +416,7 @@ static int hpet_legacy_set_periodic(struct clock_event_device *evt)
 
 static int hpet_legacy_resume(struct clock_event_device *evt)
 {
-	return hpet_resume(evt);
+	return hpet_resume(evt, 0);
 }
 
 static int hpet_legacy_next_event(unsigned long delta,
@@ -499,14 +509,8 @@ static int hpet_msi_set_periodic(struct clock_event_device *evt)
 static int hpet_msi_resume(struct clock_event_device *evt)
 {
 	struct hpet_dev *hdev = EVT_TO_HPET_DEV(evt);
-	struct irq_data *data = irq_get_irq_data(hdev->irq);
-	struct msi_msg msg;
 
-	/* Restore the MSI msg and unmask the interrupt */
-	irq_chip_compose_msi_msg(data, &msg);
-	hpet_msi_write(hdev, &msg);
-	hpet_msi_unmask(data);
-	return 0;
+	return hpet_resume(evt, hdev->num);
 }
 
 static int hpet_msi_next_event(unsigned long delta,
@@ -706,29 +710,31 @@ static void hpet_work(struct work_struct *w)
 	complete(&hpet_work->complete);
 }
 
-static int hpet_cpuhp_online(unsigned int cpu)
+static int hpet_cpuhp_notify(struct notifier_block *n,
+		unsigned long action, void *hcpu)
 {
+	unsigned long cpu = (unsigned long)hcpu;
 	struct hpet_work_struct work;
-
-	INIT_DELAYED_WORK_ONSTACK(&work.work, hpet_work);
-	init_completion(&work.complete);
-	/* FIXME: add schedule_work_on() */
-	schedule_delayed_work_on(cpu, &work.work, 0);
-	wait_for_completion(&work.complete);
-	destroy_delayed_work_on_stack(&work.work);
-	return 0;
-}
-
-static int hpet_cpuhp_dead(unsigned int cpu)
-{
 	struct hpet_dev *hdev = per_cpu(cpu_hpet_dev, cpu);
 
-	if (!hdev)
-		return 0;
-	free_irq(hdev->irq, hdev);
-	hdev->flags &= ~HPET_DEV_USED;
-	per_cpu(cpu_hpet_dev, cpu) = NULL;
-	return 0;
+	switch (action & 0xf) {
+	case CPU_ONLINE:
+		INIT_DELAYED_WORK_ONSTACK(&work.work, hpet_work);
+		init_completion(&work.complete);
+		/* FIXME: add schedule_work_on() */
+		schedule_delayed_work_on(cpu, &work.work, 0);
+		wait_for_completion(&work.complete);
+		destroy_delayed_work_on_stack(&work.work);
+		break;
+	case CPU_DEAD:
+		if (hdev) {
+			free_irq(hdev->irq, hdev);
+			hdev->flags &= ~HPET_DEV_USED;
+			per_cpu(cpu_hpet_dev, cpu) = NULL;
+		}
+		break;
+	}
+	return NOTIFY_OK;
 }
 #else
 
@@ -744,112 +750,21 @@ static void hpet_reserve_msi_timers(struct hpet_data *hd)
 }
 #endif
 
-#define hpet_cpuhp_online	NULL
-#define hpet_cpuhp_dead		NULL
+static int hpet_cpuhp_notify(struct notifier_block *n,
+		unsigned long action, void *hcpu)
+{
+	return NOTIFY_OK;
+}
 
 #endif
 
 /*
  * Clock source related code
  */
-#if defined(CONFIG_SMP) && defined(CONFIG_64BIT)
-/*
- * Reading the HPET counter is a very slow operation. If a large number of
- * CPUs are trying to access the HPET counter simultaneously, it can cause
- * massive delay and slow down system performance dramatically. This may
- * happen when HPET is the default clock source instead of TSC. For a
- * really large system with hundreds of CPUs, the slowdown may be so
- * severe that it may actually crash the system because of a NMI watchdog
- * soft lockup, for example.
- *
- * If multiple CPUs are trying to access the HPET counter at the same time,
- * we don't actually need to read the counter multiple times. Instead, the
- * other CPUs can use the counter value read by the first CPU in the group.
- *
- * This special feature is only enabled on x86-64 systems. It is unlikely
- * that 32-bit x86 systems will have enough CPUs to require this feature
- * with its associated locking overhead. And we also need 64-bit atomic
- * read.
- *
- * The lock and the hpet value are stored together and can be read in a
- * single atomic 64-bit read. It is explicitly assumed that arch_spinlock_t
- * is 32 bits in size.
- */
-union hpet_lock {
-	struct {
-		arch_spinlock_t lock;
-		u32 value;
-	};
-	u64 lockval;
-};
-
-static union hpet_lock hpet __cacheline_aligned = {
-	{ .lock = __ARCH_SPIN_LOCK_UNLOCKED, },
-};
-
-static u64 read_hpet(struct clocksource *cs)
+static cycle_t read_hpet(struct clocksource *cs)
 {
-	unsigned long flags;
-	union hpet_lock old, new;
-
-	BUILD_BUG_ON(sizeof(union hpet_lock) != 8);
-
-	/*
-	 * Read HPET directly if in NMI.
-	 */
-	if (in_nmi())
-		return (u64)hpet_readl(HPET_COUNTER);
-
-	/*
-	 * Read the current state of the lock and HPET value atomically.
-	 */
-	old.lockval = READ_ONCE(hpet.lockval);
-
-	if (arch_spin_is_locked(&old.lock))
-		goto contended;
-
-	local_irq_save(flags);
-	if (arch_spin_trylock(&hpet.lock)) {
-		new.value = hpet_readl(HPET_COUNTER);
-		/*
-		 * Use WRITE_ONCE() to prevent store tearing.
-		 */
-		WRITE_ONCE(hpet.value, new.value);
-		arch_spin_unlock(&hpet.lock);
-		local_irq_restore(flags);
-		return (u64)new.value;
-	}
-	local_irq_restore(flags);
-
-contended:
-	/*
-	 * Contended case
-	 * --------------
-	 * Wait until the HPET value change or the lock is free to indicate
-	 * its value is up-to-date.
-	 *
-	 * It is possible that old.value has already contained the latest
-	 * HPET value while the lock holder was in the process of releasing
-	 * the lock. Checking for lock state change will enable us to return
-	 * the value immediately instead of waiting for the next HPET reader
-	 * to come along.
-	 */
-	do {
-		cpu_relax();
-		new.lockval = READ_ONCE(hpet.lockval);
-	} while ((new.value == old.value) && arch_spin_is_locked(&new.lock));
-
-	return (u64)new.value;
+	return (cycle_t)hpet_readl(HPET_COUNTER);
 }
-#else
-/*
- * For UP or 32-bit.
- */
-static u64 read_hpet(struct clocksource *cs)
-{
-	return (u64)hpet_readl(HPET_COUNTER);
-}
-#endif
 
 static struct clocksource clocksource_hpet = {
 	.name		= "hpet",
@@ -858,12 +773,13 @@ static struct clocksource clocksource_hpet = {
 	.mask		= HPET_MASK,
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 	.resume		= hpet_resume_counter,
+	.archdata	= { .vclock_mode = VCLOCK_HPET },
 };
 
 static int hpet_clocksource_register(void)
 {
 	u64 start, now;
-	u64 t1;
+	cycle_t t1;
 
 	/* Start the counter */
 	hpet_restart_counter();
@@ -1016,7 +932,7 @@ out_nohpet:
  */
 static __init int hpet_late_init(void)
 {
-	int ret;
+	int cpu;
 
 	if (boot_hpet_disable)
 		return -ENODEV;
@@ -1046,20 +962,16 @@ static __init int hpet_late_init(void)
 	if (boot_cpu_has(X86_FEATURE_ARAT))
 		return 0;
 
-	/* This notifier should be called after workqueue is ready */
-	ret = cpuhp_setup_state(CPUHP_AP_X86_HPET_ONLINE, "x86/hpet:online",
-				hpet_cpuhp_online, NULL);
-	if (ret)
-		return ret;
-	ret = cpuhp_setup_state(CPUHP_X86_HPET_DEAD, "x86/hpet:dead", NULL,
-				hpet_cpuhp_dead);
-	if (ret)
-		goto err_cpuhp;
-	return 0;
+	cpu_notifier_register_begin();
+	for_each_online_cpu(cpu) {
+		hpet_cpuhp_notify(NULL, CPU_ONLINE, (void *)(long)cpu);
+	}
 
-err_cpuhp:
-	cpuhp_remove_state(CPUHP_AP_X86_HPET_ONLINE);
-	return ret;
+	/* This notifier should be called after workqueue is ready */
+	__hotcpu_notifier(hpet_cpuhp_notify, -20);
+	cpu_notifier_register_done();
+
+	return 0;
 }
 fs_initcall(hpet_late_init);
 
@@ -1109,6 +1021,7 @@ void hpet_disable(void)
  */
 #include <linux/mc146818rtc.h>
 #include <linux/rtc.h>
+#include <asm/rtc.h>
 
 #define DEFAULT_RTC_INT_FREQ	64
 #define DEFAULT_RTC_SHIFT	6
@@ -1332,7 +1245,7 @@ irqreturn_t hpet_rtc_interrupt(int irq, void *dev_id)
 	memset(&curr_time, 0, sizeof(struct rtc_time));
 
 	if (hpet_rtc_flags & (RTC_UIE | RTC_AIE))
-		mc146818_get_time(&curr_time);
+		get_rtc_time(&curr_time);
 
 	if (hpet_rtc_flags & RTC_UIE &&
 	    curr_time.tm_sec != hpet_prev_update_sec) {

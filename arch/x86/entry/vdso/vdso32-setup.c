@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * (C) Copyright 2002 Linus Torvalds
  * Portions based on the vdso-randomization code from exec-shield:
@@ -12,6 +11,7 @@
 #include <linux/kernel.h>
 #include <linux/mm_types.h>
 
+#include <asm/cpufeature.h>
 #include <asm/processor.h>
 #include <asm/vdso.h>
 

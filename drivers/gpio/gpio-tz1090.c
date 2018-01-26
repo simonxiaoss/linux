@@ -62,6 +62,7 @@ struct tz1090_gpio_bank {
 	int irq;
 	char label[16];
 };
+#define to_bank(c)	container_of(c, struct tz1090_gpio_bank, chip)
 
 /**
  * struct tz1090_gpio - Overall GPIO device private data
@@ -186,7 +187,7 @@ static inline int tz1090_gpio_read_bit(struct tz1090_gpio_bank *bank,
 static int tz1090_gpio_direction_input(struct gpio_chip *chip,
 				       unsigned int offset)
 {
-	struct tz1090_gpio_bank *bank = gpiochip_get_data(chip);
+	struct tz1090_gpio_bank *bank = to_bank(chip);
 	tz1090_gpio_set_bit(bank, REG_GPIO_DIR, offset);
 
 	return 0;
@@ -195,7 +196,7 @@ static int tz1090_gpio_direction_input(struct gpio_chip *chip,
 static int tz1090_gpio_direction_output(struct gpio_chip *chip,
 					unsigned int offset, int output_value)
 {
-	struct tz1090_gpio_bank *bank = gpiochip_get_data(chip);
+	struct tz1090_gpio_bank *bank = to_bank(chip);
 	int lstat;
 
 	__global_lock2(lstat);
@@ -211,9 +212,9 @@ static int tz1090_gpio_direction_output(struct gpio_chip *chip,
  */
 static int tz1090_gpio_get(struct gpio_chip *chip, unsigned int offset)
 {
-	struct tz1090_gpio_bank *bank = gpiochip_get_data(chip);
+	struct tz1090_gpio_bank *bank = to_bank(chip);
 
-	return !!tz1090_gpio_read_bit(bank, REG_GPIO_DIN, offset);
+	return tz1090_gpio_read_bit(bank, REG_GPIO_DIN, offset);
 }
 
 /*
@@ -222,17 +223,17 @@ static int tz1090_gpio_get(struct gpio_chip *chip, unsigned int offset)
 static void tz1090_gpio_set(struct gpio_chip *chip, unsigned int offset,
 			    int output_value)
 {
-	struct tz1090_gpio_bank *bank = gpiochip_get_data(chip);
+	struct tz1090_gpio_bank *bank = to_bank(chip);
 
 	tz1090_gpio_mod_bit(bank, REG_GPIO_DOUT, offset, output_value);
 }
 
 static int tz1090_gpio_request(struct gpio_chip *chip, unsigned int offset)
 {
-	struct tz1090_gpio_bank *bank = gpiochip_get_data(chip);
+	struct tz1090_gpio_bank *bank = to_bank(chip);
 	int ret;
 
-	ret = pinctrl_gpio_request(chip->base + offset);
+	ret = pinctrl_request_gpio(chip->base + offset);
 	if (ret)
 		return ret;
 
@@ -244,16 +245,16 @@ static int tz1090_gpio_request(struct gpio_chip *chip, unsigned int offset)
 
 static void tz1090_gpio_free(struct gpio_chip *chip, unsigned int offset)
 {
-	struct tz1090_gpio_bank *bank = gpiochip_get_data(chip);
+	struct tz1090_gpio_bank *bank = to_bank(chip);
 
-	pinctrl_gpio_free(chip->base + offset);
+	pinctrl_free_gpio(chip->base + offset);
 
 	tz1090_gpio_clear_bit(bank, REG_GPIO_BIT_EN, offset);
 }
 
 static int tz1090_gpio_to_irq(struct gpio_chip *chip, unsigned int offset)
 {
-	struct tz1090_gpio_bank *bank = gpiochip_get_data(chip);
+	struct tz1090_gpio_bank *bank = to_bank(chip);
 
 	if (!bank->domain)
 		return -EINVAL;
@@ -424,7 +425,7 @@ static int tz1090_gpio_bank_probe(struct tz1090_gpio_bank_info *info)
 	snprintf(bank->label, sizeof(bank->label), "tz1090-gpio-%u",
 		 info->index);
 	bank->chip.label		= bank->label;
-	bank->chip.parent		= dev;
+	bank->chip.dev			= dev;
 	bank->chip.direction_input	= tz1090_gpio_direction_input;
 	bank->chip.direction_output	= tz1090_gpio_direction_output;
 	bank->chip.get			= tz1090_gpio_get;
@@ -439,7 +440,7 @@ static int tz1090_gpio_bank_probe(struct tz1090_gpio_bank_info *info)
 	bank->chip.ngpio		= 30;
 
 	/* Add the GPIO bank */
-	gpiochip_add_data(&bank->chip, bank);
+	gpiochip_add(&bank->chip);
 
 	/* Get the GPIO bank IRQ if provided */
 	bank->irq = irq_of_parse_and_map(np, 0);
@@ -527,12 +528,13 @@ static void tz1090_gpio_register_banks(struct tz1090_gpio *priv)
 
 		ret = of_property_read_u32(node, "reg", &addr);
 		if (ret) {
-			dev_err(priv->dev, "invalid reg on %pOF\n", node);
+			dev_err(priv->dev, "invalid reg on %s\n",
+				node->full_name);
 			continue;
 		}
 		if (addr >= 3) {
-			dev_err(priv->dev, "index %u in %pOF out of range\n",
-				addr, node);
+			dev_err(priv->dev, "index %u in %s out of range\n",
+				addr, node->full_name);
 			continue;
 		}
 
@@ -542,7 +544,8 @@ static void tz1090_gpio_register_banks(struct tz1090_gpio *priv)
 
 		ret = tz1090_gpio_bank_probe(&info);
 		if (ret) {
-			dev_err(priv->dev, "failure registering %pOF\n", node);
+			dev_err(priv->dev, "failure registering %s\n",
+				node->full_name);
 			of_node_put(node);
 			continue;
 		}

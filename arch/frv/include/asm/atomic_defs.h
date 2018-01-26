@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 
 #include <asm/spr-regs.h>
 
@@ -163,8 +162,6 @@ ATOMIC_EXPORT(__atomic64_fetch_##op);
 ATOMIC_FETCH_OP(or)
 ATOMIC_FETCH_OP(and)
 ATOMIC_FETCH_OP(xor)
-ATOMIC_FETCH_OP(add)
-ATOMIC_FETCH_OP(sub)
 
 ATOMIC_OP_RETURN(add)
 ATOMIC_OP_RETURN(sub)

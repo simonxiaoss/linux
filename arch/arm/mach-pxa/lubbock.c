@@ -47,14 +47,14 @@
 
 #include <asm/hardware/sa1111.h>
 
-#include "pxa25x.h"
+#include <mach/pxa25x.h>
 #include <mach/audio.h>
 #include <mach/lubbock.h>
-#include "udc.h"
+#include <mach/udc.h>
 #include <linux/platform_data/irda-pxaficp.h>
 #include <linux/platform_data/video-pxafb.h>
 #include <linux/platform_data/mmc-pxamci.h>
-#include "pm.h"
+#include <mach/pm.h>
 #include <mach/smemc.h>
 
 #include "generic.h"
@@ -136,18 +136,6 @@ static struct pxa2xx_udc_mach_info udc_info __initdata = {
 	.udc_is_connected	= lubbock_udc_is_connected,
 	// no D+ pullup; lubbock can't connect/disconnect in software
 };
-
-static void lubbock_init_pcmcia(void)
-{
-	struct clk *clk;
-
-	/* Add an alias for the SA1111 PCMCIA clock */
-	clk = clk_get_sys("pxa2xx-pcmcia", NULL);
-	if (!IS_ERR(clk)) {
-		clkdev_create(clk, NULL, "1800");
-		clk_put(clk);
-	}
-}
 
 static struct resource sa1111_resources[] = {
 	[0] = {
@@ -381,11 +369,14 @@ static struct pxafb_mach_info sharp_lm8v31 = {
 
 #define	MMC_POLL_RATE		msecs_to_jiffies(1000)
 
+static void lubbock_mmc_poll(unsigned long);
 static irq_handler_t mmc_detect_int;
-static void *mmc_detect_int_data;
-static struct timer_list mmc_timer;
 
-static void lubbock_mmc_poll(struct timer_list *unused)
+static struct timer_list mmc_timer = {
+	.function	= lubbock_mmc_poll,
+};
+
+static void lubbock_mmc_poll(unsigned long data)
 {
 	unsigned long flags;
 
@@ -398,7 +389,7 @@ static void lubbock_mmc_poll(struct timer_list *unused)
 	if (LUB_IRQ_SET_CLR & (1 << 0))
 		mod_timer(&mmc_timer, jiffies + MMC_POLL_RATE);
 	else {
-		(void) mmc_detect_int(LUBBOCK_SD_IRQ, mmc_detect_int_data);
+		(void) mmc_detect_int(LUBBOCK_SD_IRQ, (void *)data);
 		enable_irq(LUBBOCK_SD_IRQ);
 	}
 }
@@ -418,8 +409,8 @@ static int lubbock_mci_init(struct device *dev,
 {
 	/* detect card insert/eject */
 	mmc_detect_int = detect_int;
-	mmc_detect_int_data = data;
-	timer_setup(&mmc_timer, lubbock_mmc_poll, 0);
+	init_timer(&mmc_timer);
+	mmc_timer.data = (unsigned long) data;
 	return request_irq(LUBBOCK_SD_IRQ, lubbock_detect_int,
 			   0, "lubbock-sd-detect", data);
 }
@@ -475,8 +466,6 @@ static void __init lubbock_init(void)
 	pxa_set_ffuart_info(NULL);
 	pxa_set_btuart_info(NULL);
 	pxa_set_stuart_info(NULL);
-
-	lubbock_init_pcmcia();
 
 	clk_add_alias("SA1111_CLK", NULL, "GPIO11_CLK", NULL);
 	pxa_set_udc_info(&udc_info);

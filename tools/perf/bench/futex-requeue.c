@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2013  Davidlohr Bueso <davidlohr@hp.com>
  *
@@ -9,23 +8,18 @@
  * requeues without waking up any tasks -- thus mimicking a regular futex_wait.
  */
 
-/* For the CLR_() macros */
-#include <string.h>
-#include <pthread.h>
-
-#include <signal.h>
+#include "../perf.h"
+#include "../util/util.h"
 #include "../util/stat.h"
-#include <subcmd/parse-options.h>
-#include <linux/compiler.h>
-#include <linux/kernel.h>
-#include <linux/time64.h>
-#include <errno.h>
+#include "../util/parse-options.h"
+#include "../util/header.h"
 #include "bench.h"
 #include "futex.h"
 
 #include <err.h>
 #include <stdlib.h>
 #include <sys/time.h>
+#include <pthread.h>
 
 static u_int32_t futex1 = 0, futex2 = 0;
 
@@ -65,7 +59,7 @@ static void print_summary(void)
 	printf("Requeued %d of %d threads in %.4f ms (+-%.2f%%)\n",
 	       requeued_avg,
 	       nthreads,
-	       requeuetime_avg / USEC_PER_MSEC,
+	       requeuetime_avg/1e3,
 	       rel_stddev_stats(requeuetime_stddev, requeuetime_avg));
 }
 
@@ -110,7 +104,8 @@ static void toggle_done(int sig __maybe_unused,
 	done = true;
 }
 
-int bench_futex_requeue(int argc, const char **argv)
+int bench_futex_requeue(int argc, const char **argv,
+			const char *prefix __maybe_unused)
 {
 	int ret = 0;
 	unsigned int i, j;
@@ -186,7 +181,7 @@ int bench_futex_requeue(int argc, const char **argv)
 
 		if (!silent) {
 			printf("[Run %d]: Requeued %d of %d threads in %.4f ms\n",
-			       j + 1, nrequeued, nthreads, runtime.tv_usec / (double)USEC_PER_MSEC);
+			       j + 1, nrequeued, nthreads, runtime.tv_usec/1e3);
 		}
 
 		/* everybody should be blocked on futex2, wake'em up */

@@ -1,6 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2003-2008 Takahiro Hirofuchi
+ *
+ * This is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307,
+ * USA.
  */
 
 #include <linux/device.h>
@@ -149,7 +163,8 @@ static void stub_shutdown_connection(struct usbip_device *ud)
 	 * step 1?
 	 */
 	if (ud->tcp_socket) {
-		dev_dbg(&sdev->udev->dev, "shutdown sockfd %d\n", ud->sockfd);
+		dev_dbg(&sdev->udev->dev, "shutdown tcp_socket %p\n",
+			ud->tcp_socket);
 		kernel_sock_shutdown(ud->tcp_socket, SHUT_RDWR);
 	}
 
@@ -204,7 +219,7 @@ static void stub_device_reset(struct usbip_device *ud)
 
 	dev_dbg(&udev->dev, "device reset");
 
-	ret = usb_lock_device_for_reset(udev, NULL);
+	ret = usb_lock_device_for_reset(udev, sdev->interface);
 	if (ret < 0) {
 		dev_err(&udev->dev, "lock for reset\n");
 		spin_lock_irq(&ud->lock);
@@ -237,7 +252,7 @@ static void stub_device_unusable(struct usbip_device *ud)
 
 /**
  * stub_device_alloc - allocate a new stub_device struct
- * @udev: usb_device of a new device
+ * @interface: usb_interface of a new device
  *
  * Allocates and initializes a new stub_device struct.
  */
@@ -373,6 +388,7 @@ err_files:
 err_port:
 	dev_set_drvdata(&udev->dev, NULL);
 	usb_put_dev(udev);
+	kthread_stop_put(sdev->ud.eh);
 
 	busid_priv->sdev = NULL;
 	stub_device_free(sdev);
@@ -433,7 +449,7 @@ static void stub_disconnect(struct usb_device *udev)
 	}
 
 	/* If usb reset is called from event handler */
-	if (usbip_in_eh(current))
+	if (busid_priv->sdev->ud.eh == current)
 		return;
 
 	/* shutdown the current connection */

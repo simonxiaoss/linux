@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/alpha/kernel/process.c
  *
@@ -12,9 +11,6 @@
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/sched.h>
-#include <linux/sched/debug.h>
-#include <linux/sched/task.h>
-#include <linux/sched/task_stack.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
@@ -35,7 +31,7 @@
 #include <linux/rcupdate.h>
 
 #include <asm/reg.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/io.h>
 #include <asm/pgtable.h>
 #include <asm/hwrpb.h>
@@ -213,6 +209,14 @@ start_thread(struct pt_regs * regs, unsigned long pc, unsigned long sp)
 	wrusp(sp);
 }
 EXPORT_SYMBOL(start_thread);
+
+/*
+ * Free current thread data structures etc..
+ */
+void
+exit_thread(void)
+{
+}
 
 void
 flush_thread(void)

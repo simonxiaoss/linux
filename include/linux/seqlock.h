@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_SEQLOCK_H
 #define __LINUX_SEQLOCK_H
 /*
@@ -278,10 +277,7 @@ static inline void raw_write_seqcount_barrier(seqcount_t *s)
 
 static inline int raw_read_seqcount_latch(seqcount_t *s)
 {
-	int seq = READ_ONCE(s->sequence);
-	/* Pairs with the first smp_wmb() in raw_write_seqcount_latch() */
-	smp_read_barrier_depends();
-	return seq;
+	return lockless_dereference(s->sequence);
 }
 
 /**
@@ -335,7 +331,7 @@ static inline int raw_read_seqcount_latch(seqcount_t *s)
  *	unsigned seq, idx;
  *
  *	do {
- *		seq = raw_read_seqcount_latch(&latch->seq);
+ *		seq = lockless_dereference(latch->seq);
  *
  *		idx = seq & 0x01;
  *		entry = data_query(latch->data[idx], ...);

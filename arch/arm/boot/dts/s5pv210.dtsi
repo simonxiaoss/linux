@@ -19,13 +19,11 @@
  * published by the Free Software Foundation.
 */
 
+#include "skeleton.dtsi"
 #include <dt-bindings/clock/s5pv210.h>
 #include <dt-bindings/clock/s5pv210-audss.h>
 
 / {
-	#address-cells = <1>;
-	#size-cells = <1>;
-
 	aliases {
 		csis0 = &csis0;
 		fimc0 = &fimc0;
@@ -132,7 +130,7 @@
 		amba {
 			#address-cells = <1>;
 			#size-cells = <1>;
-			compatible = "simple-bus";
+			compatible = "arm,amba-bus";
 			ranges;
 
 			pdma0: dma@e0900000 {
@@ -310,7 +308,7 @@
 		};
 
 		watchdog: watchdog@e2700000 {
-			compatible = "samsung,s3c6410-wdt";
+			compatible = "samsung,s3c2410-wdt";
 			reg = <0xe2700000 0x1000>;
 			interrupt-parent = <&vic0>;
 			interrupts = <26>;

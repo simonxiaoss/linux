@@ -100,6 +100,8 @@ struct l2tp_skb_cb {
 
 #define L2TP_SKB_CB(skb)	((struct l2tp_skb_cb *) &skb->cb[sizeof(struct inet_skb_parm)])
 
+static atomic_t l2tp_tunnel_count;
+static atomic_t l2tp_session_count;
 static struct workqueue_struct *l2tp_wq;
 
 /* per-net private data for this module */
@@ -111,18 +113,52 @@ struct l2tp_net {
 	spinlock_t l2tp_session_hlist_lock;
 };
 
+static void l2tp_tunnel_free(struct l2tp_tunnel *tunnel);
 
 static inline struct l2tp_tunnel *l2tp_tunnel(struct sock *sk)
 {
 	return sk->sk_user_data;
 }
 
-static inline struct l2tp_net *l2tp_pernet(const struct net *net)
+static inline struct l2tp_net *l2tp_pernet(struct net *net)
 {
 	BUG_ON(!net);
 
 	return net_generic(net, l2tp_net_id);
 }
+
+/* Tunnel reference counts. Incremented per session that is added to
+ * the tunnel.
+ */
+static inline void l2tp_tunnel_inc_refcount_1(struct l2tp_tunnel *tunnel)
+{
+	atomic_inc(&tunnel->ref_count);
+}
+
+static inline void l2tp_tunnel_dec_refcount_1(struct l2tp_tunnel *tunnel)
+{
+	if (atomic_dec_and_test(&tunnel->ref_count))
+		l2tp_tunnel_free(tunnel);
+}
+#ifdef L2TP_REFCNT_DEBUG
+#define l2tp_tunnel_inc_refcount(_t)					\
+do {									\
+	pr_debug("l2tp_tunnel_inc_refcount: %s:%d %s: cnt=%d\n",	\
+		 __func__, __LINE__, (_t)->name,			\
+		 atomic_read(&_t->ref_count));				\
+	l2tp_tunnel_inc_refcount_1(_t);					\
+} while (0)
+#define l2tp_tunnel_dec_refcount(_t)					\
+do {									\
+	pr_debug("l2tp_tunnel_dec_refcount: %s:%d %s: cnt=%d\n",	\
+		 __func__, __LINE__, (_t)->name,			\
+		 atomic_read(&_t->ref_count));				\
+	l2tp_tunnel_dec_refcount_1(_t);					\
+} while (0)
+#else
+#define l2tp_tunnel_inc_refcount(t) l2tp_tunnel_inc_refcount_1(t)
+#define l2tp_tunnel_dec_refcount(t) l2tp_tunnel_dec_refcount_1(t)
+#endif
 
 /* Session hash global list for L2TPv3.
  * The session_id SHOULD be random according to RFC3931, but several
@@ -181,6 +217,27 @@ static void l2tp_tunnel_sock_put(struct sock *sk)
 	sock_put(sk);
 }
 
+/* Lookup a session by id in the global session list
+ */
+static struct l2tp_session *l2tp_session_find_2(struct net *net, u32 session_id)
+{
+	struct l2tp_net *pn = l2tp_pernet(net);
+	struct hlist_head *session_list =
+		l2tp_session_id_hash_2(pn, session_id);
+	struct l2tp_session *session;
+
+	rcu_read_lock_bh();
+	hlist_for_each_entry_rcu(session, session_list, global_hlist) {
+		if (session->session_id == session_id) {
+			rcu_read_unlock_bh();
+			return session;
+		}
+	}
+	rcu_read_unlock_bh();
+
+	return NULL;
+}
+
 /* Session hash list.
  * The session_id SHOULD be random according to RFC2661, but several
  * L2TP implementations (Cisco and Microsoft) use incrementing
@@ -193,61 +250,25 @@ l2tp_session_id_hash(struct l2tp_tunnel *tunnel, u32 session_id)
 	return &tunnel->session_hlist[hash_32(session_id, L2TP_HASH_BITS)];
 }
 
-/* Lookup a tunnel. A new reference is held on the returned tunnel. */
-struct l2tp_tunnel *l2tp_tunnel_get(const struct net *net, u32 tunnel_id)
-{
-	const struct l2tp_net *pn = l2tp_pernet(net);
-	struct l2tp_tunnel *tunnel;
-
-	rcu_read_lock_bh();
-	list_for_each_entry_rcu(tunnel, &pn->l2tp_tunnel_list, list) {
-		if (tunnel->tunnel_id == tunnel_id) {
-			l2tp_tunnel_inc_refcount(tunnel);
-			rcu_read_unlock_bh();
-
-			return tunnel;
-		}
-	}
-	rcu_read_unlock_bh();
-
-	return NULL;
-}
-EXPORT_SYMBOL_GPL(l2tp_tunnel_get);
-
-/* Lookup a session. A new reference is held on the returned session. */
-struct l2tp_session *l2tp_session_get(const struct net *net,
-				      struct l2tp_tunnel *tunnel,
-				      u32 session_id)
+/* Lookup a session by id
+ */
+struct l2tp_session *l2tp_session_find(struct net *net, struct l2tp_tunnel *tunnel, u32 session_id)
 {
 	struct hlist_head *session_list;
 	struct l2tp_session *session;
 
-	if (!tunnel) {
-		struct l2tp_net *pn = l2tp_pernet(net);
-
-		session_list = l2tp_session_id_hash_2(pn, session_id);
-
-		rcu_read_lock_bh();
-		hlist_for_each_entry_rcu(session, session_list, global_hlist) {
-			if (session->session_id == session_id) {
-				l2tp_session_inc_refcount(session);
-				rcu_read_unlock_bh();
-
-				return session;
-			}
-		}
-		rcu_read_unlock_bh();
-
-		return NULL;
-	}
+	/* In L2TPv3, session_ids are unique over all tunnels and we
+	 * sometimes need to look them up before we know the
+	 * tunnel.
+	 */
+	if (tunnel == NULL)
+		return l2tp_session_find_2(net, session_id);
 
 	session_list = l2tp_session_id_hash(tunnel, session_id);
 	read_lock_bh(&tunnel->hlist_lock);
 	hlist_for_each_entry(session, session_list, hlist) {
 		if (session->session_id == session_id) {
-			l2tp_session_inc_refcount(session);
 			read_unlock_bh(&tunnel->hlist_lock);
-
 			return session;
 		}
 	}
@@ -255,9 +276,10 @@ struct l2tp_session *l2tp_session_get(const struct net *net,
 
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(l2tp_session_get);
+EXPORT_SYMBOL_GPL(l2tp_session_find);
 
-struct l2tp_session *l2tp_session_get_nth(struct l2tp_tunnel *tunnel, int nth)
+struct l2tp_session *l2tp_session_get_nth(struct l2tp_tunnel *tunnel, int nth,
+					  bool do_ref)
 {
 	int hash;
 	struct l2tp_session *session;
@@ -268,6 +290,8 @@ struct l2tp_session *l2tp_session_get_nth(struct l2tp_tunnel *tunnel, int nth)
 		hlist_for_each_entry(session, &tunnel->session_hlist[hash], hlist) {
 			if (++count > nth) {
 				l2tp_session_inc_refcount(session);
+				if (do_ref && session->ref)
+					session->ref(session);
 				read_unlock_bh(&tunnel->hlist_lock);
 				return session;
 			}
@@ -283,8 +307,7 @@ EXPORT_SYMBOL_GPL(l2tp_session_get_nth);
 /* Lookup a session by interface name.
  * This is very inefficient but is only used by management interfaces.
  */
-struct l2tp_session *l2tp_session_get_by_ifname(const struct net *net,
-						const char *ifname)
+struct l2tp_session *l2tp_session_find_by_ifname(struct net *net, char *ifname)
 {
 	struct l2tp_net *pn = l2tp_pernet(net);
 	int hash;
@@ -294,9 +317,7 @@ struct l2tp_session *l2tp_session_get_by_ifname(const struct net *net,
 	for (hash = 0; hash < L2TP_HASH_SIZE_2; hash++) {
 		hlist_for_each_entry_rcu(session, &pn->l2tp_session_hlist[hash], global_hlist) {
 			if (!strcmp(session->ifname, ifname)) {
-				l2tp_session_inc_refcount(session);
 				rcu_read_unlock_bh();
-
 				return session;
 			}
 		}
@@ -306,71 +327,11 @@ struct l2tp_session *l2tp_session_get_by_ifname(const struct net *net,
 
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(l2tp_session_get_by_ifname);
-
-int l2tp_session_register(struct l2tp_session *session,
-			  struct l2tp_tunnel *tunnel)
-{
-	struct l2tp_session *session_walk;
-	struct hlist_head *g_head;
-	struct hlist_head *head;
-	struct l2tp_net *pn;
-	int err;
-
-	head = l2tp_session_id_hash(tunnel, session->session_id);
-
-	write_lock_bh(&tunnel->hlist_lock);
-	if (!tunnel->acpt_newsess) {
-		err = -ENODEV;
-		goto err_tlock;
-	}
-
-	hlist_for_each_entry(session_walk, head, hlist)
-		if (session_walk->session_id == session->session_id) {
-			err = -EEXIST;
-			goto err_tlock;
-		}
-
-	if (tunnel->version == L2TP_HDR_VER_3) {
-		pn = l2tp_pernet(tunnel->l2tp_net);
-		g_head = l2tp_session_id_hash_2(l2tp_pernet(tunnel->l2tp_net),
-						session->session_id);
-
-		spin_lock_bh(&pn->l2tp_session_hlist_lock);
-
-		hlist_for_each_entry(session_walk, g_head, global_hlist)
-			if (session_walk->session_id == session->session_id) {
-				err = -EEXIST;
-				goto err_tlock_pnlock;
-			}
-
-		l2tp_tunnel_inc_refcount(tunnel);
-		sock_hold(tunnel->sock);
-		hlist_add_head_rcu(&session->global_hlist, g_head);
-
-		spin_unlock_bh(&pn->l2tp_session_hlist_lock);
-	} else {
-		l2tp_tunnel_inc_refcount(tunnel);
-		sock_hold(tunnel->sock);
-	}
-
-	hlist_add_head(&session->hlist, head);
-	write_unlock_bh(&tunnel->hlist_lock);
-
-	return 0;
-
-err_tlock_pnlock:
-	spin_unlock_bh(&pn->l2tp_session_hlist_lock);
-err_tlock:
-	write_unlock_bh(&tunnel->hlist_lock);
-
-	return err;
-}
-EXPORT_SYMBOL_GPL(l2tp_session_register);
+EXPORT_SYMBOL_GPL(l2tp_session_find_by_ifname);
 
 /* Lookup a tunnel by id
  */
-struct l2tp_tunnel *l2tp_tunnel_find(const struct net *net, u32 tunnel_id)
+struct l2tp_tunnel *l2tp_tunnel_find(struct net *net, u32 tunnel_id)
 {
 	struct l2tp_tunnel *tunnel;
 	struct l2tp_net *pn = l2tp_pernet(net);
@@ -388,7 +349,7 @@ struct l2tp_tunnel *l2tp_tunnel_find(const struct net *net, u32 tunnel_id)
 }
 EXPORT_SYMBOL_GPL(l2tp_tunnel_find);
 
-struct l2tp_tunnel *l2tp_tunnel_find_nth(const struct net *net, int nth)
+struct l2tp_tunnel *l2tp_tunnel_find_nth(struct net *net, int nth)
 {
 	struct l2tp_net *pn = l2tp_pernet(net);
 	struct l2tp_tunnel *tunnel;
@@ -471,6 +432,9 @@ static void l2tp_recv_dequeue_skb(struct l2tp_session *session, struct sk_buff *
 		(*session->recv_skb)(session, skb, L2TP_SKB_CB(skb)->length);
 	else
 		kfree_skb(skb);
+
+	if (session->deref)
+		(*session->deref)(session);
 }
 
 /* Dequeue skbs from the session's reorder_q, subject to packet order.
@@ -499,6 +463,8 @@ start:
 			session->reorder_skip = 1;
 			__skb_unlink(skb, &session->reorder_q);
 			kfree_skb(skb);
+			if (session->deref)
+				(*session->deref)(session);
 			continue;
 		}
 
@@ -680,6 +646,14 @@ void l2tp_recv_common(struct l2tp_session *session, struct sk_buff *skb,
 	int offset;
 	u32 ns, nr;
 
+	/* The ref count is increased since we now hold a pointer to
+	 * the session. Take care to decrement the refcnt when exiting
+	 * this function from now on...
+	 */
+	l2tp_session_inc_refcount(session);
+	if (session->ref)
+		(*session->ref)(session);
+
 	/* Parse and check optional cookie */
 	if (session->peer_cookie_len > 0) {
 		if (memcmp(ptr, &session->peer_cookie[0], session->peer_cookie_len)) {
@@ -745,7 +719,7 @@ void l2tp_recv_common(struct l2tp_session *session, struct sk_buff *skb,
 			l2tp_info(session, L2TP_MSG_SEQ,
 				  "%s: requested to enable seq numbers by LNS\n",
 				  session->name);
-			session->send_seq = 1;
+			session->send_seq = -1;
 			l2tp_session_set_header_len(session, tunnel->version);
 		}
 	} else {
@@ -832,11 +806,18 @@ void l2tp_recv_common(struct l2tp_session *session, struct sk_buff *skb,
 	/* Try to dequeue as many skbs from reorder_q as we can. */
 	l2tp_recv_dequeue(session);
 
+	l2tp_session_dec_refcount(session);
+
 	return;
 
 discard:
 	atomic_long_inc(&session->stats.rx_errors);
 	kfree_skb(skb);
+
+	if (session->deref)
+		(*session->deref)(session);
+
+	l2tp_session_dec_refcount(session);
 }
 EXPORT_SYMBOL(l2tp_recv_common);
 
@@ -850,6 +831,8 @@ int l2tp_session_queue_purge(struct l2tp_session *session)
 	while ((skb = skb_dequeue(&session->reorder_q))) {
 		atomic_long_inc(&session->stats.rx_errors);
 		kfree_skb(skb);
+		if (session->deref)
+			(*session->deref)(session);
 	}
 	return 0;
 }
@@ -941,11 +924,8 @@ static int l2tp_udp_recv_core(struct l2tp_tunnel *tunnel, struct sk_buff *skb,
 	}
 
 	/* Find the session context */
-	session = l2tp_session_get(tunnel->l2tp_net, tunnel, session_id);
+	session = l2tp_session_find(tunnel->l2tp_net, tunnel, session_id);
 	if (!session || !session->recv_skb) {
-		if (session)
-			l2tp_session_dec_refcount(session);
-
 		/* Not found? Pass to userspace to deal with */
 		l2tp_info(tunnel, L2TP_MSG_DATA,
 			  "%s: no session found (%u/%u). Passing up.\n",
@@ -954,7 +934,6 @@ static int l2tp_udp_recv_core(struct l2tp_tunnel *tunnel, struct sk_buff *skb,
 	}
 
 	l2tp_recv_common(session, skb, ptr, optr, hdrflags, length, payload_hook);
-	l2tp_session_dec_refcount(session);
 
 	return 0;
 
@@ -1083,10 +1062,10 @@ static int l2tp_xmit_core(struct l2tp_session *session, struct sk_buff *skb,
 
 	/* Debug */
 	if (session->send_seq)
-		l2tp_dbg(session, L2TP_MSG_DATA, "%s: send %zd bytes, ns=%u\n",
+		l2tp_dbg(session, L2TP_MSG_DATA, "%s: send %Zd bytes, ns=%u\n",
 			 session->name, data_len, session->ns - 1);
 	else
-		l2tp_dbg(session, L2TP_MSG_DATA, "%s: send %zd bytes\n",
+		l2tp_dbg(session, L2TP_MSG_DATA, "%s: send %Zd bytes\n",
 			 session->name, data_len);
 
 	if (session->debug & L2TP_MSG_DATA) {
@@ -1239,14 +1218,16 @@ static void l2tp_tunnel_destruct(struct sock *sk)
 	/* Remove hooks into tunnel socket */
 	sk->sk_destruct = tunnel->old_sk_destruct;
 	sk->sk_user_data = NULL;
+	tunnel->sock = NULL;
 
 	/* Remove the tunnel struct from the tunnel list */
 	pn = l2tp_pernet(tunnel->l2tp_net);
 	spin_lock_bh(&pn->l2tp_tunnel_list_lock);
 	list_del_rcu(&tunnel->list);
 	spin_unlock_bh(&pn->l2tp_tunnel_list_lock);
+	atomic_dec(&l2tp_tunnel_count);
 
-	tunnel->sock = NULL;
+	l2tp_tunnel_closeall(tunnel);
 	l2tp_tunnel_dec_refcount(tunnel);
 
 	/* Call the original destructor */
@@ -1271,7 +1252,6 @@ void l2tp_tunnel_closeall(struct l2tp_tunnel *tunnel)
 		  tunnel->name);
 
 	write_lock_bh(&tunnel->hlist_lock);
-	tunnel->acpt_newsess = false;
 	for (hash = 0; hash < L2TP_HASH_SIZE; hash++) {
 again:
 		hlist_for_each_safe(walk, tmp, &tunnel->session_hlist[hash]) {
@@ -1282,8 +1262,8 @@ again:
 
 			hlist_del_init(&session->hlist);
 
-			if (test_and_set_bit(0, &session->dead))
-				goto again;
+			if (session->ref != NULL)
+				(*session->ref)(session);
 
 			write_unlock_bh(&tunnel->hlist_lock);
 
@@ -1292,6 +1272,9 @@ again:
 
 			if (session->session_close != NULL)
 				(*session->session_close)(session);
+
+			if (session->deref != NULL)
+				(*session->deref)(session);
 
 			l2tp_session_dec_refcount(session);
 
@@ -1317,6 +1300,17 @@ static void l2tp_udp_encap_destroy(struct sock *sk)
 		l2tp_tunnel_closeall(tunnel);
 		sock_put(sk);
 	}
+}
+
+/* Really kill the tunnel.
+ * Come here only when all sessions have been cleared from the tunnel.
+ */
+static void l2tp_tunnel_free(struct l2tp_tunnel *tunnel)
+{
+	BUG_ON(atomic_read(&tunnel->ref_count) != 0);
+	BUG_ON(tunnel->sock != NULL);
+	l2tp_info(tunnel, L2TP_MSG_CONTROL, "%s: free...\n", tunnel->name);
+	kfree_rcu(tunnel, rcu);
 }
 
 /* Workqueue tunnel deletion function */
@@ -1389,9 +1383,9 @@ static int l2tp_tunnel_sock_create(struct net *net,
 			memcpy(&udp_conf.peer_ip6, cfg->peer_ip6,
 			       sizeof(udp_conf.peer_ip6));
 			udp_conf.use_udp6_tx_checksums =
-			  ! cfg->udp6_zero_tx_checksums;
+			    cfg->udp6_zero_tx_checksums;
 			udp_conf.use_udp6_rx_checksums =
-			  ! cfg->udp6_zero_rx_checksums;
+			    cfg->udp6_zero_rx_checksums;
 		} else
 #endif
 		{
@@ -1565,7 +1559,6 @@ int l2tp_tunnel_create(struct net *net, int fd, int version, u32 tunnel_id, u32 
 	tunnel->magic = L2TP_TUNNEL_MAGIC;
 	sprintf(&tunnel->name[0], "tunl %u", tunnel_id);
 	rwlock_init(&tunnel->hlist_lock);
-	tunnel->acpt_newsess = true;
 
 	/* The net we belong to */
 	tunnel->l2tp_net = net;
@@ -1623,11 +1616,12 @@ int l2tp_tunnel_create(struct net *net, int fd, int version, u32 tunnel_id, u32 
 
 	/* Add tunnel to our list */
 	INIT_LIST_HEAD(&tunnel->list);
+	atomic_inc(&l2tp_tunnel_count);
 
 	/* Bump the reference count. The tunnel context is deleted
 	 * only when this drops to zero. Must be done before list insertion
 	 */
-	refcount_set(&tunnel->ref_count, 1);
+	l2tp_tunnel_inc_refcount(tunnel);
 	spin_lock_bh(&pn->l2tp_tunnel_list_lock);
 	list_add_rcu(&tunnel->list, &pn->l2tp_tunnel_list);
 	spin_unlock_bh(&pn->l2tp_tunnel_list_lock);
@@ -1664,10 +1658,12 @@ void l2tp_session_free(struct l2tp_session *session)
 {
 	struct l2tp_tunnel *tunnel = session->tunnel;
 
-	BUG_ON(refcount_read(&session->ref_count) != 0);
+	BUG_ON(atomic_read(&session->ref_count) != 0);
 
 	if (tunnel) {
 		BUG_ON(tunnel->magic != L2TP_TUNNEL_MAGIC);
+		if (session->session_id != 0)
+			atomic_dec(&l2tp_session_count);
 		sock_put(tunnel->sock);
 		session->tunnel = NULL;
 		l2tp_tunnel_dec_refcount(tunnel);
@@ -1710,16 +1706,15 @@ EXPORT_SYMBOL_GPL(__l2tp_session_unhash);
  */
 int l2tp_session_delete(struct l2tp_session *session)
 {
-	if (test_and_set_bit(0, &session->dead))
-		return 0;
-
+	if (session->ref)
+		(*session->ref)(session);
 	__l2tp_session_unhash(session);
 	l2tp_session_queue_purge(session);
 	if (session->session_close != NULL)
 		(*session->session_close)(session);
-
+	if (session->deref)
+		(*session->deref)(session);
 	l2tp_session_dec_refcount(session);
-
 	return 0;
 }
 EXPORT_SYMBOL_GPL(l2tp_session_delete);
@@ -1800,12 +1795,37 @@ struct l2tp_session *l2tp_session_create(int priv_size, struct l2tp_tunnel *tunn
 
 		l2tp_session_set_header_len(session, tunnel->version);
 
-		refcount_set(&session->ref_count, 1);
+		/* Bump the reference count. The session context is deleted
+		 * only when this drops to zero.
+		 */
+		l2tp_session_inc_refcount(session);
+		l2tp_tunnel_inc_refcount(tunnel);
 
-		return session;
+		/* Ensure tunnel socket isn't deleted */
+		sock_hold(tunnel->sock);
+
+		/* Add session to the tunnel's hash list */
+		write_lock_bh(&tunnel->hlist_lock);
+		hlist_add_head(&session->hlist,
+			       l2tp_session_id_hash(tunnel, session_id));
+		write_unlock_bh(&tunnel->hlist_lock);
+
+		/* And to the global session list if L2TPv3 */
+		if (tunnel->version != L2TP_HDR_VER_2) {
+			struct l2tp_net *pn = l2tp_pernet(tunnel->l2tp_net);
+
+			spin_lock_bh(&pn->l2tp_session_hlist_lock);
+			hlist_add_head_rcu(&session->global_hlist,
+					   l2tp_session_id_hash_2(pn, session_id));
+			spin_unlock_bh(&pn->l2tp_session_hlist_lock);
+		}
+
+		/* Ignore management session in session count value */
+		if (session->session_id != 0)
+			atomic_inc(&l2tp_session_count);
 	}
 
-	return ERR_PTR(-ENOMEM);
+	return session;
 }
 EXPORT_SYMBOL_GPL(l2tp_session_create);
 
@@ -1833,19 +1853,12 @@ static __net_exit void l2tp_exit_net(struct net *net)
 {
 	struct l2tp_net *pn = l2tp_pernet(net);
 	struct l2tp_tunnel *tunnel = NULL;
-	int hash;
 
 	rcu_read_lock_bh();
 	list_for_each_entry_rcu(tunnel, &pn->l2tp_tunnel_list, list) {
 		l2tp_tunnel_delete(tunnel);
 	}
 	rcu_read_unlock_bh();
-
-	flush_workqueue(l2tp_wq);
-	rcu_barrier();
-
-	for (hash = 0; hash < L2TP_HASH_SIZE_2; hash++)
-		WARN_ON_ONCE(!hlist_empty(&pn->l2tp_session_hlist[hash]));
 }
 
 static struct pernet_operations l2tp_net_ops = {

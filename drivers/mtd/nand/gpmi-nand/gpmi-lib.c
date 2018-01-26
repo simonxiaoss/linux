@@ -26,7 +26,7 @@
 #include "gpmi-regs.h"
 #include "bch-regs.h"
 
-static struct timing_threshold timing_default_threshold = {
+static struct timing_threshod timing_default_threshold = {
 	.max_data_setup_cycles       = (BM_GPMI_TIMING0_DATA_SETUP >>
 						BP_GPMI_TIMING0_DATA_SETUP),
 	.internal_data_setup_in_ns   = 0,
@@ -161,7 +161,7 @@ int gpmi_init(struct gpmi_nand_data *this)
 
 	ret = gpmi_enable_clk(this);
 	if (ret)
-		return ret;
+		goto err_out;
 	ret = gpmi_reset_block(r->gpmi_regs, false);
 	if (ret)
 		goto err_out;
@@ -197,7 +197,6 @@ int gpmi_init(struct gpmi_nand_data *this)
 	gpmi_disable_clk(this);
 	return 0;
 err_out:
-	gpmi_disable_clk(this);
 	return ret;
 }
 
@@ -271,7 +270,7 @@ int bch_set_geometry(struct gpmi_nand_data *this)
 
 	ret = gpmi_enable_clk(this);
 	if (ret)
-		return ret;
+		goto err_out;
 
 	/*
 	* Due to erratum #2847 of the MX23, the BCH cannot be soft reset on this
@@ -309,7 +308,6 @@ int bch_set_geometry(struct gpmi_nand_data *this)
 	gpmi_disable_clk(this);
 	return 0;
 err_out:
-	gpmi_disable_clk(this);
 	return ret;
 }
 
@@ -329,7 +327,7 @@ static unsigned int ns_to_cycles(unsigned int time,
 static int gpmi_nfc_compute_hardware_timing(struct gpmi_nand_data *this,
 					struct gpmi_nfc_hardware_timing *hw)
 {
-	struct timing_threshold *nfc = &timing_default_threshold;
+	struct timing_threshod *nfc = &timing_default_threshold;
 	struct resources *r = &this->resources;
 	struct nand_chip *nand = &this->nand;
 	struct nand_timing target = this->timing;
@@ -921,7 +919,7 @@ static int enable_edo_mode(struct gpmi_nand_data *this, int mode)
 {
 	struct resources  *r = &this->resources;
 	struct nand_chip *nand = &this->nand;
-	struct mtd_info	 *mtd = nand_to_mtd(nand);
+	struct mtd_info	 *mtd = &this->mtd;
 	uint8_t *feature;
 	unsigned long rate;
 	int ret;
@@ -932,7 +930,7 @@ static int enable_edo_mode(struct gpmi_nand_data *this, int mode)
 
 	nand->select_chip(mtd, 0);
 
-	/* [1] send SET FEATURE command to NAND */
+	/* [1] send SET FEATURE commond to NAND */
 	feature[0] = mode;
 	ret = nand->onfi_set_features(mtd, nand,
 				ONFI_FEATURE_ADDR_TIMING_MODE, feature);

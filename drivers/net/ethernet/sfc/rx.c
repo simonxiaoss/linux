@@ -163,7 +163,7 @@ static int efx_init_rx_buffers(struct efx_rx_queue *rx_queue, bool atomic)
 	do {
 		page = efx_reuse_page(rx_queue);
 		if (page == NULL) {
-			page = alloc_pages(__GFP_COMP |
+			page = alloc_pages(__GFP_COLD | __GFP_COMP |
 					   (atomic ? GFP_ATOMIC : GFP_KERNEL),
 					   efx->rx_buffer_order);
 			if (unlikely(page == NULL))
@@ -335,7 +335,7 @@ void efx_fast_push_rx_descriptors(struct efx_rx_queue *rx_queue, bool atomic)
 
 	/* Calculate current fill level, and exit if we don't need to fill */
 	fill_level = (rx_queue->added_count - rx_queue->removed_count);
-	EFX_WARN_ON_ONCE_PARANOID(fill_level > rx_queue->efx->rxq_entries);
+	EFX_BUG_ON_PARANOID(fill_level > rx_queue->efx->rxq_entries);
 	if (fill_level >= rx_queue->fast_fill_trigger)
 		goto out;
 
@@ -347,7 +347,7 @@ void efx_fast_push_rx_descriptors(struct efx_rx_queue *rx_queue, bool atomic)
 
 	batch_size = efx->rx_pages_per_batch * efx->rx_bufs_per_page;
 	space = rx_queue->max_fill - fill_level;
-	EFX_WARN_ON_ONCE_PARANOID(space < batch_size);
+	EFX_BUG_ON_PARANOID(space < batch_size);
 
 	netif_vdbg(rx_queue->efx, rx_status, rx_queue->efx->net_dev,
 		   "RX queue %d fast-filling descriptor ring from"
@@ -376,9 +376,9 @@ void efx_fast_push_rx_descriptors(struct efx_rx_queue *rx_queue, bool atomic)
 		efx_nic_notify_rx_desc(rx_queue);
 }
 
-void efx_rx_slow_fill(struct timer_list *t)
+void efx_rx_slow_fill(unsigned long context)
 {
-	struct efx_rx_queue *rx_queue = from_timer(rx_queue, t, slow_fill);
+	struct efx_rx_queue *rx_queue = (struct efx_rx_queue *)context;
 
 	/* Post an event to cause NAPI to run and refill the queue */
 	efx_nic_generate_fill_event(rx_queue);
@@ -400,10 +400,21 @@ static void efx_rx_packet__check_len(struct efx_rx_queue *rx_queue,
 	 */
 	rx_buf->flags |= EFX_RX_PKT_DISCARD;
 
-	if (net_ratelimit())
-		netif_err(efx, rx_err, efx->net_dev,
-			  "RX queue %d overlength RX event (%#x > %#x)\n",
-			  efx_rx_queue_index(rx_queue), len, max_len);
+	if ((len > rx_buf->len) && EFX_WORKAROUND_8071(efx)) {
+		if (net_ratelimit())
+			netif_err(efx, rx_err, efx->net_dev,
+				  " RX queue %d seriously overlength "
+				  "RX event (0x%x > 0x%x+0x%x). Leaking\n",
+				  efx_rx_queue_index(rx_queue), len, max_len,
+				  efx->type->rx_buffer_padding);
+		efx_schedule_reset(efx, RESET_TYPE_RX_RECOVERY);
+	} else {
+		if (net_ratelimit())
+			netif_err(efx, rx_err, efx->net_dev,
+				  " RX queue %d overlength RX event "
+				  "(0x%x > 0x%x)\n",
+				  efx_rx_queue_index(rx_queue), len, max_len);
+	}
 
 	efx_rx_queue_channel(rx_queue)->n_rx_overlength++;
 }
@@ -434,7 +445,6 @@ efx_rx_packet_gro(struct efx_channel *channel, struct efx_rx_buffer *rx_buf,
 			     PKT_HASH_TYPE_L3);
 	skb->ip_summed = ((rx_buf->flags & EFX_RX_PKT_CSUMMED) ?
 			  CHECKSUM_UNNECESSARY : CHECKSUM_NONE);
-	skb->csum_level = !!(rx_buf->flags & EFX_RX_PKT_CSUM_LEVEL);
 
 	for (;;) {
 		skb_fill_page_desc(skb, skb_shinfo(skb)->nr_frags,
@@ -453,6 +463,7 @@ efx_rx_packet_gro(struct efx_channel *channel, struct efx_rx_buffer *rx_buf,
 
 	skb_record_rx_queue(skb, channel->rx_queue.core_index);
 
+	skb_mark_napi_id(skb, &channel->napi_str);
 	gro_result = napi_gro_frags(napi);
 	if (gro_result != GRO_DROP)
 		channel->irq_mod_score += 2;
@@ -476,7 +487,7 @@ static struct sk_buff *efx_rx_mk_skb(struct efx_channel *channel,
 		return NULL;
 	}
 
-	EFX_WARN_ON_ONCE_PARANOID(rx_buf->len < hdr_len);
+	EFX_BUG_ON_PARANOID(rx_buf->len < hdr_len);
 
 	memcpy(skb->data + efx->rx_ip_align, eh - efx->rx_prefix_size,
 	       efx->rx_prefix_size + hdr_len);
@@ -622,10 +633,8 @@ static void efx_rx_deliver(struct efx_channel *channel, u8 *eh,
 
 	/* Set the SKB flags */
 	skb_checksum_none_assert(skb);
-	if (likely(rx_buf->flags & EFX_RX_PKT_CSUMMED)) {
+	if (likely(rx_buf->flags & EFX_RX_PKT_CSUMMED))
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
-		skb->csum_level = !!(rx_buf->flags & EFX_RX_PKT_CSUM_LEVEL);
-	}
 
 	efx_rx_skb_attach_timestamp(channel, skb);
 
@@ -668,7 +677,8 @@ void __efx_rx_packet(struct efx_channel *channel)
 	if (unlikely(!(efx->net_dev->features & NETIF_F_RXCSUM)))
 		rx_buf->flags &= ~EFX_RX_PKT_CSUMMED;
 
-	if ((rx_buf->flags & EFX_RX_PKT_TCP) && !channel->type->receive_skb)
+	if ((rx_buf->flags & EFX_RX_PKT_TCP) && !channel->type->receive_skb &&
+	    !efx_channel_busy_polling(channel))
 		efx_rx_packet_gro(channel, rx_buf, channel->rx_pkt_n_frags, eh);
 	else
 		efx_rx_deliver(channel, eh, rx_buf, channel->rx_pkt_n_frags);
@@ -684,7 +694,7 @@ int efx_probe_rx_queue(struct efx_rx_queue *rx_queue)
 
 	/* Create the smallest power-of-two aligned ring */
 	entries = max(roundup_pow_of_two(efx->rxq_entries), EFX_MIN_DMAQ_SIZE);
-	EFX_WARN_ON_PARANOID(entries > EFX_MAX_DMAQ_SIZE);
+	EFX_BUG_ON_PARANOID(entries > EFX_MAX_DMAQ_SIZE);
 	rx_queue->ptr_mask = entries - 1;
 
 	netif_dbg(efx, probe, efx->net_dev,
@@ -833,18 +843,33 @@ int efx_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
 	struct efx_nic *efx = netdev_priv(net_dev);
 	struct efx_channel *channel;
 	struct efx_filter_spec spec;
-	struct flow_keys fk;
+	const __be16 *ports;
+	__be16 ether_type;
+	int nhoff;
 	int rc;
 
-	if (flow_id == RPS_FLOW_ID_INVALID)
-		return -EINVAL;
+	/* The core RPS/RFS code has already parsed and validated
+	 * VLAN, IP and transport headers.  We assume they are in the
+	 * header area.
+	 */
 
-	if (!skb_flow_dissect_flow_keys(skb, &fk, 0))
-		return -EPROTONOSUPPORT;
+	if (skb->protocol == htons(ETH_P_8021Q)) {
+		const struct vlan_hdr *vh =
+			(const struct vlan_hdr *)skb->data;
 
-	if (fk.basic.n_proto != htons(ETH_P_IP) && fk.basic.n_proto != htons(ETH_P_IPV6))
-		return -EPROTONOSUPPORT;
-	if (fk.control.flags & FLOW_DIS_IS_FRAGMENT)
+		/* We can't filter on the IP 5-tuple and the vlan
+		 * together, so just strip the vlan header and filter
+		 * on the IP part.
+		 */
+		EFX_BUG_ON_PARANOID(skb_headlen(skb) < sizeof(*vh));
+		ether_type = vh->h_vlan_encapsulated_proto;
+		nhoff = sizeof(struct vlan_hdr);
+	} else {
+		ether_type = skb->protocol;
+		nhoff = 0;
+	}
+
+	if (ether_type != htons(ETH_P_IP) && ether_type != htons(ETH_P_IPV6))
 		return -EPROTONOSUPPORT;
 
 	efx_filter_init_rx(&spec, EFX_FILTER_PRI_HINT,
@@ -854,41 +879,56 @@ int efx_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
 		EFX_FILTER_MATCH_ETHER_TYPE | EFX_FILTER_MATCH_IP_PROTO |
 		EFX_FILTER_MATCH_LOC_HOST | EFX_FILTER_MATCH_LOC_PORT |
 		EFX_FILTER_MATCH_REM_HOST | EFX_FILTER_MATCH_REM_PORT;
-	spec.ether_type = fk.basic.n_proto;
-	spec.ip_proto = fk.basic.ip_proto;
+	spec.ether_type = ether_type;
 
-	if (fk.basic.n_proto == htons(ETH_P_IP)) {
-		spec.rem_host[0] = fk.addrs.v4addrs.src;
-		spec.loc_host[0] = fk.addrs.v4addrs.dst;
+	if (ether_type == htons(ETH_P_IP)) {
+		const struct iphdr *ip =
+			(const struct iphdr *)(skb->data + nhoff);
+
+		EFX_BUG_ON_PARANOID(skb_headlen(skb) < nhoff + sizeof(*ip));
+		if (ip_is_fragment(ip))
+			return -EPROTONOSUPPORT;
+		spec.ip_proto = ip->protocol;
+		spec.rem_host[0] = ip->saddr;
+		spec.loc_host[0] = ip->daddr;
+		EFX_BUG_ON_PARANOID(skb_headlen(skb) < nhoff + 4 * ip->ihl + 4);
+		ports = (const __be16 *)(skb->data + nhoff + 4 * ip->ihl);
 	} else {
-		memcpy(spec.rem_host, &fk.addrs.v6addrs.src, sizeof(struct in6_addr));
-		memcpy(spec.loc_host, &fk.addrs.v6addrs.dst, sizeof(struct in6_addr));
+		const struct ipv6hdr *ip6 =
+			(const struct ipv6hdr *)(skb->data + nhoff);
+
+		EFX_BUG_ON_PARANOID(skb_headlen(skb) <
+				    nhoff + sizeof(*ip6) + 4);
+		spec.ip_proto = ip6->nexthdr;
+		memcpy(spec.rem_host, &ip6->saddr, sizeof(ip6->saddr));
+		memcpy(spec.loc_host, &ip6->daddr, sizeof(ip6->daddr));
+		ports = (const __be16 *)(ip6 + 1);
 	}
 
-	spec.rem_port = fk.ports.src;
-	spec.loc_port = fk.ports.dst;
+	spec.rem_port = ports[0];
+	spec.loc_port = ports[1];
 
 	rc = efx->type->filter_rfs_insert(efx, &spec);
 	if (rc < 0)
 		return rc;
 
 	/* Remember this so we can check whether to expire the filter later */
-	channel = efx_get_channel(efx, rxq_index);
-	channel->rps_flow_id[rc] = flow_id;
+	efx->rps_flow_id[rc] = flow_id;
+	channel = efx_get_channel(efx, skb_get_rx_queue(skb));
 	++channel->rfs_filters_added;
 
-	if (spec.ether_type == htons(ETH_P_IP))
+	if (ether_type == htons(ETH_P_IP))
 		netif_info(efx, rx_status, efx->net_dev,
 			   "steering %s %pI4:%u:%pI4:%u to queue %u [flow %u filter %d]\n",
 			   (spec.ip_proto == IPPROTO_TCP) ? "TCP" : "UDP",
-			   spec.rem_host, ntohs(spec.rem_port), spec.loc_host,
-			   ntohs(spec.loc_port), rxq_index, flow_id, rc);
+			   spec.rem_host, ntohs(ports[0]), spec.loc_host,
+			   ntohs(ports[1]), rxq_index, flow_id, rc);
 	else
 		netif_info(efx, rx_status, efx->net_dev,
 			   "steering %s [%pI6]:%u:[%pI6]:%u to queue %u [flow %u filter %d]\n",
 			   (spec.ip_proto == IPPROTO_TCP) ? "TCP" : "UDP",
-			   spec.rem_host, ntohs(spec.rem_port), spec.loc_host,
-			   ntohs(spec.loc_port), rxq_index, flow_id, rc);
+			   spec.rem_host, ntohs(ports[0]), spec.loc_host,
+			   ntohs(ports[1]), rxq_index, flow_id, rc);
 
 	return rc;
 }
@@ -896,34 +936,24 @@ int efx_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
 bool __efx_filter_rfs_expire(struct efx_nic *efx, unsigned int quota)
 {
 	bool (*expire_one)(struct efx_nic *efx, u32 flow_id, unsigned int index);
-	unsigned int channel_idx, index, size;
+	unsigned int index, size;
 	u32 flow_id;
 
 	if (!spin_trylock_bh(&efx->filter_lock))
 		return false;
 
 	expire_one = efx->type->filter_rfs_expire_one;
-	channel_idx = efx->rps_expire_channel;
 	index = efx->rps_expire_index;
 	size = efx->type->max_rx_ip_filters;
 	while (quota--) {
-		struct efx_channel *channel = efx_get_channel(efx, channel_idx);
-		flow_id = channel->rps_flow_id[index];
-
-		if (flow_id != RPS_FLOW_ID_INVALID &&
-		    expire_one(efx, flow_id, index)) {
+		flow_id = efx->rps_flow_id[index];
+		if (expire_one(efx, flow_id, index))
 			netif_info(efx, rx_status, efx->net_dev,
-				   "expired filter %d [queue %u flow %u]\n",
-				   index, channel_idx, flow_id);
-			channel->rps_flow_id[index] = RPS_FLOW_ID_INVALID;
-		}
-		if (++index == size) {
-			if (++channel_idx == efx->n_channels)
-				channel_idx = 0;
+				   "expired filter %d [flow %u]\n",
+				   index, flow_id);
+		if (++index == size)
 			index = 0;
-		}
 	}
-	efx->rps_expire_channel = channel_idx;
 	efx->rps_expire_index = index;
 
 	spin_unlock_bh(&efx->filter_lock);

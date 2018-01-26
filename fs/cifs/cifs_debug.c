@@ -24,7 +24,7 @@
 #include <linux/ctype.h>
 #include <linux/module.h>
 #include <linux/proc_fs.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include "cifspdu.h"
 #include "cifsglob.h"
 #include "cifsproto.h"
@@ -160,13 +160,8 @@ static int cifs_debug_data_proc_show(struct seq_file *m, void *v)
 			if ((ses->serverDomain == NULL) ||
 				(ses->serverOS == NULL) ||
 				(ses->serverNOS == NULL)) {
-				seq_printf(m, "\n%d) Name: %s Uses: %d Capability: 0x%x\tSession Status: %d\t",
-					i, ses->serverName, ses->ses_count,
-					ses->capabilities, ses->status);
-				if (ses->session_flags & SMB2_SESSION_FLAG_IS_GUEST)
-					seq_printf(m, "Guest\t");
-				else if (ses->session_flags & SMB2_SESSION_FLAG_IS_NULL)
-					seq_printf(m, "Anonymous\t");
+				seq_printf(m, "\n%d) entry for %s not fully "
+					   "displayed\n\t", i, ses->serverName);
 			} else {
 				seq_printf(m,
 				    "\n%d) Name: %s  Domain: %s Uses: %d OS:"
@@ -250,6 +245,7 @@ static int cifs_debug_data_proc_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations cifs_debug_data_proc_fops = {
+	.owner		= THIS_MODULE,
 	.open		= cifs_debug_data_proc_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -366,6 +362,7 @@ static int cifs_stats_proc_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations cifs_stats_proc_fops = {
+	.owner		= THIS_MODULE,
 	.open		= cifs_stats_proc_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -451,6 +448,7 @@ static ssize_t cifsFYI_proc_write(struct file *file, const char __user *buffer,
 }
 
 static const struct file_operations cifsFYI_proc_fops = {
+	.owner		= THIS_MODULE,
 	.open		= cifsFYI_proc_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -482,6 +480,7 @@ static ssize_t cifs_linux_ext_proc_write(struct file *file,
 }
 
 static const struct file_operations cifs_linux_ext_proc_fops = {
+	.owner		= THIS_MODULE,
 	.open		= cifs_linux_ext_proc_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -513,6 +512,7 @@ static ssize_t cifs_lookup_cache_proc_write(struct file *file,
 }
 
 static const struct file_operations cifs_lookup_cache_proc_fops = {
+	.owner		= THIS_MODULE,
 	.open		= cifs_lookup_cache_proc_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -544,6 +544,7 @@ static ssize_t traceSMB_proc_write(struct file *file, const char __user *buffer,
 }
 
 static const struct file_operations traceSMB_proc_fops = {
+	.owner		= THIS_MODULE,
 	.open		= traceSMB_proc_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -655,6 +656,7 @@ static ssize_t cifs_security_flags_proc_write(struct file *file,
 }
 
 static const struct file_operations cifs_security_flags_proc_fops = {
+	.owner		= THIS_MODULE,
 	.open		= cifs_security_flags_proc_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,

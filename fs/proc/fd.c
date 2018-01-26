@@ -1,5 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
-#include <linux/sched/signal.h>
+#include <linux/sched.h>
 #include <linux/errno.h>
 #include <linux/dcache.h>
 #include <linux/path.h>
@@ -32,7 +31,7 @@ static int seq_show(struct seq_file *m, void *v)
 	put_task_struct(task);
 
 	if (files) {
-		unsigned int fd = proc_fd(m->private);
+		int fd = proc_fd(m->private);
 
 		spin_lock(&files->file_lock);
 		file = fcheck_files(files, fd);
@@ -85,8 +84,9 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 {
 	struct files_struct *files;
 	struct task_struct *task;
+	const struct cred *cred;
 	struct inode *inode;
-	unsigned int fd;
+	int fd;
 
 	if (flags & LOOKUP_RCU)
 		return -ECHILD;
@@ -108,7 +108,16 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 				rcu_read_unlock();
 				put_files_struct(files);
 
-				task_dump_owner(task, 0, &inode->i_uid, &inode->i_gid);
+				if (task_dumpable(task)) {
+					rcu_read_lock();
+					cred = __task_cred(task);
+					inode->i_uid = cred->euid;
+					inode->i_gid = cred->egid;
+					rcu_read_unlock();
+				} else {
+					inode->i_uid = GLOBAL_ROOT_UID;
+					inode->i_gid = GLOBAL_ROOT_GID;
+				}
 
 				if (S_ISLNK(inode->i_mode)) {
 					unsigned i_mode = S_IFLNK;
@@ -149,7 +158,7 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 	}
 
 	if (files) {
-		unsigned int fd = proc_fd(d_inode(dentry));
+		int fd = proc_fd(d_inode(dentry));
 		struct file *fd_file;
 
 		spin_lock(&files->file_lock);
@@ -174,13 +183,14 @@ proc_fd_instantiate(struct inode *dir, struct dentry *dentry,
 	struct proc_inode *ei;
 	struct inode *inode;
 
-	inode = proc_pid_make_inode(dir->i_sb, task, S_IFLNK);
+	inode = proc_pid_make_inode(dir->i_sb, task);
 	if (!inode)
 		goto out;
 
 	ei = PROC_I(inode);
 	ei->fd = fd;
 
+	inode->i_mode = S_IFLNK;
 	inode->i_op = &proc_pid_link_inode_operations;
 	inode->i_size = 64;
 
@@ -243,12 +253,11 @@ static int proc_readfd_common(struct file *file, struct dir_context *ctx,
 			continue;
 		rcu_read_unlock();
 
-		len = snprintf(name, sizeof(name), "%u", fd);
+		len = snprintf(name, sizeof(name), "%d", fd);
 		if (!proc_fill_cache(file, ctx,
 				     name, len, instantiate, p,
 				     (void *)(unsigned long)fd))
 			goto out_fd_loop;
-		cond_resched();
 		rcu_read_lock();
 	}
 	rcu_read_unlock();
@@ -266,8 +275,8 @@ static int proc_readfd(struct file *file, struct dir_context *ctx)
 
 const struct file_operations proc_fd_operations = {
 	.read		= generic_read_dir,
-	.iterate_shared	= proc_readfd,
-	.llseek		= generic_file_llseek,
+	.iterate	= proc_readfd,
+	.llseek		= default_llseek,
 };
 
 static struct dentry *proc_lookupfd(struct inode *dir, struct dentry *dentry,
@@ -312,13 +321,14 @@ proc_fdinfo_instantiate(struct inode *dir, struct dentry *dentry,
 	struct proc_inode *ei;
 	struct inode *inode;
 
-	inode = proc_pid_make_inode(dir->i_sb, task, S_IFREG | S_IRUSR);
+	inode = proc_pid_make_inode(dir->i_sb, task);
 	if (!inode)
 		goto out;
 
 	ei = PROC_I(inode);
 	ei->fd = fd;
 
+	inode->i_mode = S_IFREG | S_IRUSR;
 	inode->i_fop = &proc_fdinfo_file_operations;
 
 	d_set_d_op(dentry, &tid_fd_dentry_operations);
@@ -350,6 +360,6 @@ const struct inode_operations proc_fdinfo_inode_operations = {
 
 const struct file_operations proc_fdinfo_operations = {
 	.read		= generic_read_dir,
-	.iterate_shared	= proc_readfdinfo,
-	.llseek		= generic_file_llseek,
+	.iterate	= proc_readfdinfo,
+	.llseek		= default_llseek,
 };

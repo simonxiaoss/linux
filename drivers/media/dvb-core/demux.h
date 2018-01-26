@@ -1,10 +1,6 @@
 /*
  * demux.h
  *
- * The Kernel Digital TV Demux kABI defines a driver-internal interface for
- * registering low-level, hardware specific driver to a hardware independent
- * demux layer.
- *
  * Copyright (c) 2002 Convergence GmbH
  *
  * based on code:
@@ -20,6 +16,10 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  *
  */
 
@@ -61,7 +61,7 @@
  */
 
 /**
- * enum ts_filter_type - filter type bitmap for dmx_ts_feed.set\(\)
+ * enum ts_filter_type - filter type bitmap for dmx_ts_feed.set()
  *
  * @TS_PACKET:		Send TS packets (188 bytes) to callback (default).
  * @TS_PAYLOAD_ONLY:	In case TS_PACKET is set, only send the TS payload
@@ -99,7 +99,8 @@ struct dmx_ts_feed {
 		   u16 pid,
 		   int type,
 		   enum dmx_ts_pes pes_type,
-		   ktime_t timeout);
+		   size_t circular_buffer_size,
+		   struct timespec timeout);
 	int (*start_filtering)(struct dmx_ts_feed *feed);
 	int (*stop_filtering)(struct dmx_ts_feed *feed);
 };
@@ -176,6 +177,7 @@ struct dmx_section_feed {
 	/* public: */
 	int (*set)(struct dmx_section_feed *feed,
 		   u16 pid,
+		   size_t circular_buffer_size,
 		   int check_crc);
 	int (*allocate_filter)(struct dmx_section_feed *feed,
 			       struct dmx_section_filter **filter);
@@ -184,6 +186,10 @@ struct dmx_section_feed {
 	int (*start_filtering)(struct dmx_section_feed *feed);
 	int (*stop_filtering)(struct dmx_section_feed *feed);
 };
+
+/*
+ * Callback functions
+ */
 
 /**
  * typedef dmx_ts_cb - DVB demux TS filter callback function prototype
@@ -196,11 +202,12 @@ struct dmx_section_feed {
  *
  * This function callback prototype, provided by the client of the demux API,
  * is called from the demux code. The function is only called when filtering
- * on a TS feed has been enabled using the start_filtering\(\) function at
+ * on ae TS feed has been enabled using the start_filtering() function at
  * the &dmx_demux.
  * Any TS packets that match the filter settings are copied to a circular
  * buffer. The filtered TS packets are delivered to the client using this
- * callback function.
+ * callback function. The size of the circular buffer is controlled by the
+ * circular_buffer_size parameter of the &dmx_ts_feed.@set function.
  * It is expected that the @buffer1 and @buffer2 callback parameters point to
  * addresses within the circular buffer, but other implementations are also
  * possible. Note that the called party should not try to free the memory
@@ -210,7 +217,7 @@ struct dmx_section_feed {
  * the start of the first undelivered TS packet within a circular buffer.
  * The @buffer2 buffer parameter is normally NULL, except when the received
  * TS packets have crossed the last address of the circular buffer and
- * "wrapped" to the beginning of the buffer. In the latter case the @buffer1
+ * ”wrapped” to the beginning of the buffer. In the latter case the @buffer1
  * parameter would contain an address within the circular buffer, while the
  * @buffer2 parameter would contain the first address of the circular buffer.
  * The number of bytes delivered with this function (i.e. @buffer1_length +
@@ -236,10 +243,8 @@ struct dmx_section_feed {
  * will also be sent to the hardware MPEG decoder.
  *
  * Return:
- *
- * - 0, on success;
- *
- * - -EOVERFLOW, on buffer overflow.
+ * 	0, on success;
+ * 	-EOVERFLOW, on buffer overflow.
  */
 typedef int (*dmx_ts_cb)(const u8 *buffer1,
 			 size_t buffer1_length,
@@ -288,9 +293,9 @@ typedef int (*dmx_section_cb)(const u8 *buffer1,
 			      size_t buffer2_len,
 			      struct dmx_section_filter *source);
 
-/*
- * DVB Front-End
- */
+/*--------------------------------------------------------------------------*/
+/* DVB Front-End */
+/*--------------------------------------------------------------------------*/
 
 /**
  * enum dmx_frontend_source - Used to identify the type of frontend
@@ -334,7 +339,7 @@ struct dmx_frontend {
  * @DMX_SECTION_FILTERING:	set if section filtering is supported;
  * @DMX_MEMORY_BASED_FILTERING:	set if write() available.
  *
- * Those flags are OR'ed in the &dmx_demux.capabilities field
+ * Those flags are OR'ed in the &dmx_demux.&capabilities field
  */
 enum dmx_demux_caps {
 	DMX_TS_FILTERING = 1,
@@ -344,15 +349,15 @@ enum dmx_demux_caps {
 
 /*
  * Demux resource type identifier.
- */
+*/
 
-/**
- * DMX_FE_ENTRY - Casts elements in the list of registered
- *		  front-ends from the generic type struct list_head
- *		  to the type * struct dmx_frontend
- *
- * @list: list of struct dmx_frontend
- */
+/*
+ * DMX_FE_ENTRY(): Casts elements in the list of registered
+ * front-ends from the generic type struct list_head
+ * to the type * struct dmx_frontend
+ *.
+*/
+
 #define DMX_FE_ENTRY(list) \
 	list_entry(list, struct dmx_frontend, connectivity_list)
 
@@ -374,10 +379,10 @@ enum dmx_demux_caps {
  *	@open is called and decrement it when @close is called.
  *	The @demux function parameter contains a pointer to the demux API and
  *	instance data.
- *	It returns:
- *	0 on success;
- *	-EUSERS, if maximum usage count was reached;
- *	-EINVAL, on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-EUSERS, if maximum usage count was reached;
+ *		-EINVAL, on bad parameter.
  *
  * @close: This function reserves the demux for use by the caller and, if
  *	necessary, initializes the demux. When the demux is no longer needed,
@@ -387,10 +392,10 @@ enum dmx_demux_caps {
  *	@open is called and decrement it when @close is called.
  *	The @demux function parameter contains a pointer to the demux API and
  *	instance data.
- *	It returns:
- *	0 on success;
- *	-ENODEV, if demux was not in use (e. g. no users);
- *	-EINVAL, on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-ENODEV, if demux was not in use (e. g. no users);
+ *		-EINVAL, on bad parameter.
  *
  * @write: This function provides the demux driver with a memory buffer
  *	containing TS packets. Instead of receiving TS packets from the DVB
@@ -405,12 +410,12 @@ enum dmx_demux_caps {
  *	The @buf function parameter contains a pointer to the TS data in
  *	kernel-space memory.
  *	The @count function parameter contains the length of the TS data.
- *	It returns:
- *	0 on success;
- *	-ERESTARTSYS, if mutex lock was interrupted;
- *	-EINTR, if a signal handling is pending;
- *	-ENODEV, if demux was removed;
- *	-EINVAL, on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-ERESTARTSYS, if mutex lock was interrupted;
+ *		-EINTR, if a signal handling is pending;
+ *		-ENODEV, if demux was removed;
+ *		-EINVAL, on bad parameter.
  *
  * @allocate_ts_feed: Allocates a new TS feed, which is used to filter the TS
  *	packets carrying a certain PID. The TS feed normally corresponds to a
@@ -421,11 +426,11 @@ enum dmx_demux_caps {
  *	instance data.
  *	The @callback function parameter contains a pointer to the callback
  *	function for passing received TS packet.
- *	It returns:
- *	0 on success;
- *	-ERESTARTSYS, if mutex lock was interrupted;
- *	-EBUSY, if no more TS feeds is available;
- *	-EINVAL, on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-ERESTARTSYS, if mutex lock was interrupted;
+ *		-EBUSY, if no more TS feeds is available;
+ *		-EINVAL, on bad parameter.
  *
  * @release_ts_feed: Releases the resources allocated with @allocate_ts_feed.
  *	Any filtering in progress on the TS feed should be stopped before
@@ -434,9 +439,9 @@ enum dmx_demux_caps {
  *	instance data.
  *	The @feed function parameter contains a pointer to the TS feed API and
  *	instance data.
- *	It returns:
- *	0 on success;
- *	-EINVAL on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-EINVAL on bad parameter.
  *
  * @allocate_section_feed: Allocates a new section feed, i.e. a demux resource
  *	for filtering and receiving sections. On platforms with hardware
@@ -452,10 +457,10 @@ enum dmx_demux_caps {
  *	instance data.
  *	The @callback function parameter contains a pointer to the callback
  *	function for passing received TS packet.
- *	It returns:
- *	0 on success;
- *	-EBUSY, if no more TS feeds is available;
- *	-EINVAL, on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-EBUSY, if no more TS feeds is available;
+ *		-EINVAL, on bad parameter.
  *
  * @release_section_feed: Releases the resources allocated with
  *	@allocate_section_feed, including allocated filters. Any filtering in
@@ -465,9 +470,9 @@ enum dmx_demux_caps {
  *	instance data.
  *	The @feed function parameter contains a pointer to the TS feed API and
  *	instance data.
- *	It returns:
- *	0 on success;
- *	-EINVAL, on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-EINVAL, on bad parameter.
  *
  * @add_frontend: Registers a connectivity between a demux and a front-end,
  *	i.e., indicates that the demux can be connected via a call to
@@ -481,9 +486,9 @@ enum dmx_demux_caps {
  *	instance data.
  *	The @frontend function parameter contains a pointer to the front-end
  *	instance data.
- *	It returns:
- *	0 on success;
- *	-EINVAL, on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-EINVAL, on bad parameter.
  *
  * @remove_frontend: Indicates that the given front-end, registered by a call
  *	to @add_frontend, can no longer be connected as a TS source by this
@@ -497,10 +502,10 @@ enum dmx_demux_caps {
  *	instance data.
  *	The @frontend function parameter contains a pointer to the front-end
  *	instance data.
- *	It returns:
- *	0 on success;
- *	-ENODEV, if the front-end was not found,
- *	-EINVAL, on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-ENODEV, if the front-end was not found,
+ *		-EINVAL, on bad parameter.
  *
  * @get_frontends: Provides the APIs of the front-ends that have been
  *	registered for this demux. Any of the front-ends obtained with this
@@ -524,17 +529,17 @@ enum dmx_demux_caps {
  *	instance data.
  *	The @frontend function parameter contains a pointer to the front-end
  *	instance data.
- *	It returns:
- *	0 on success;
- *	-EINVAL, on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-EINVAL, on bad parameter.
  *
  * @disconnect_frontend: Disconnects the demux and a front-end previously
  *	connected by a @connect_frontend call.
  *	The @demux function parameter contains a pointer to the demux API and
  *	instance data.
- *	It returns:
- *	0 on success;
- *	-EINVAL on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-EINVAL on bad parameter.
  *
  * @get_pes_pids: Get the PIDs for DMX_PES_AUDIO0, DMX_PES_VIDEO0,
  *	DMX_PES_TELETEXT0, DMX_PES_SUBTITLE0 and DMX_PES_PCR0.
@@ -542,10 +547,11 @@ enum dmx_demux_caps {
  *	instance data.
  *	The @pids function parameter contains an array with five u16 elements
  *	where the PIDs will be stored.
- *	It returns:
- *	0 on success;
- *	-EINVAL on bad parameter.
+ *	It returns
+ *		0 on success;
+ *		-EINVAL on bad parameter.
  */
+
 struct dmx_demux {
 	enum dmx_demux_caps capabilities;
 	struct dmx_frontend *frontend;
@@ -575,12 +581,15 @@ struct dmx_demux {
 
 	int (*get_pes_pids)(struct dmx_demux *demux, u16 *pids);
 
-	/* private: */
-
+	/* private: Not used upstream and never documented */
+#if 0
+	int (*get_caps)(struct dmx_demux *demux, struct dmx_caps *caps);
+	int (*set_source)(struct dmx_demux *demux, const dmx_source_t *src);
+#endif
 	/*
-	 * Only used at av7110, to read some data from firmware.
-	 * As this was never documented, we have no clue about what's
-	 * there, and its usage on other drivers aren't encouraged.
+	 * private: Only used at av7110, to read some data from firmware.
+	 *	As this was never documented, we have no clue about what's
+	 *	there, and its usage on other drivers aren't encouraged.
 	 */
 	int (*get_stc)(struct dmx_demux *demux, unsigned int num,
 		       u64 *stc, unsigned int *base);

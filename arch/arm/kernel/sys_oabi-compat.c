@@ -76,7 +76,6 @@
 #include <linux/syscalls.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
-#include <linux/cred.h>
 #include <linux/fcntl.h>
 #include <linux/eventpoll.h>
 #include <linux/sem.h>

@@ -12,14 +12,13 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/sched.h>
-#include <linux/sched/user.h>
 #include <linux/keyctl.h>
 #include <linux/fs.h>
 #include <linux/err.h>
 #include <linux/mutex.h>
 #include <linux/security.h>
 #include <linux/user_namespace.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include "internal.h"
 
 /* Session keyring create vs join semaphore */
@@ -30,7 +29,7 @@ static DEFINE_MUTEX(key_user_keyring_mutex);
 
 /* The root user's tracking struct */
 struct key_user root_key_user = {
-	.usage		= REFCOUNT_INIT(3),
+	.usage		= ATOMIC_INIT(3),
 	.cons_lock	= __MUTEX_INITIALIZER(root_key_user.cons_lock),
 	.lock		= __SPIN_LOCK_UNLOCKED(root_key_user.lock),
 	.nkeys		= ATOMIC_INIT(2),
@@ -79,7 +78,7 @@ int install_user_keyrings(void)
 						    cred, user_keyring_perm,
 						    KEY_ALLOC_UID_KEYRING |
 							KEY_ALLOC_IN_QUOTA,
-						    NULL, NULL);
+						    NULL);
 			if (IS_ERR(uid_keyring)) {
 				ret = PTR_ERR(uid_keyring);
 				goto error;
@@ -97,7 +96,7 @@ int install_user_keyrings(void)
 					      cred, user_keyring_perm,
 					      KEY_ALLOC_UID_KEYRING |
 						  KEY_ALLOC_IN_QUOTA,
-					      NULL, NULL);
+					      NULL);
 			if (IS_ERR(session_keyring)) {
 				ret = PTR_ERR(session_keyring);
 				goto error_release;
@@ -144,8 +143,7 @@ int install_thread_keyring_to_cred(struct cred *new)
 
 	keyring = keyring_alloc("_tid", new->uid, new->gid, new,
 				KEY_POS_ALL | KEY_USR_VIEW,
-				KEY_ALLOC_QUOTA_OVERRUN,
-				NULL, NULL);
+				KEY_ALLOC_QUOTA_OVERRUN, NULL);
 	if (IS_ERR(keyring))
 		return PTR_ERR(keyring);
 
@@ -191,8 +189,7 @@ int install_process_keyring_to_cred(struct cred *new)
 
 	keyring = keyring_alloc("_pid", new->uid, new->gid, new,
 				KEY_POS_ALL | KEY_USR_VIEW,
-				KEY_ALLOC_QUOTA_OVERRUN,
-				NULL, NULL);
+				KEY_ALLOC_QUOTA_OVERRUN, NULL);
 	if (IS_ERR(keyring))
 		return PTR_ERR(keyring);
 
@@ -245,7 +242,7 @@ int install_session_keyring_to_cred(struct cred *cred, struct key *keyring)
 
 		keyring = keyring_alloc("_ses", cred->uid, cred->gid, cred,
 					KEY_POS_ALL | KEY_USR_VIEW | KEY_USR_READ,
-					flags, NULL, NULL);
+					flags, NULL);
 		if (IS_ERR(keyring))
 			return PTR_ERR(keyring);
 	} else {
@@ -738,7 +735,7 @@ try_again:
 	if (ret < 0)
 		goto invalid_key;
 
-	key->last_used_at = ktime_get_real_seconds();
+	key->last_used_at = current_kernel_time().tv_sec;
 
 error:
 	put_cred(ctx.cred);
@@ -802,7 +799,7 @@ long join_session_keyring(const char *name)
 		keyring = keyring_alloc(
 			name, old->uid, old->gid, old,
 			KEY_POS_ALL | KEY_USR_VIEW | KEY_USR_READ | KEY_USR_LINK,
-			KEY_ALLOC_IN_QUOTA, NULL, NULL);
+			KEY_ALLOC_IN_QUOTA, NULL);
 		if (IS_ERR(keyring)) {
 			ret = PTR_ERR(keyring);
 			goto error2;
@@ -811,14 +808,15 @@ long join_session_keyring(const char *name)
 		ret = PTR_ERR(keyring);
 		goto error2;
 	} else if (keyring == new->session_keyring) {
+		key_put(keyring);
 		ret = 0;
-		goto error3;
+		goto error2;
 	}
 
 	/* we've got a keyring - now to install it */
 	ret = install_session_keyring_to_cred(new, keyring);
 	if (ret < 0)
-		goto error3;
+		goto error2;
 
 	commit_creds(new);
 	mutex_unlock(&key_session_mutex);
@@ -828,8 +826,6 @@ long join_session_keyring(const char *name)
 okay:
 	return ret;
 
-error3:
-	key_put(keyring);
 error2:
 	mutex_unlock(&key_session_mutex);
 error:

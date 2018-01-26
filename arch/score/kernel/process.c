@@ -28,8 +28,6 @@
 #include <linux/elfcore.h>
 #include <linux/pm.h>
 #include <linux/rcupdate.h>
-#include <linux/sched/task.h>
-#include <linux/sched/task_stack.h>
 
 void (*pm_power_off)(void);
 EXPORT_SYMBOL(pm_power_off);
@@ -57,6 +55,8 @@ void start_thread(struct pt_regs *regs, unsigned long pc, unsigned long sp)
 	regs->cp0_epc = pc;
 	regs->regs[0] = sp;
 }
+
+void exit_thread(void) {}
 
 /*
  * When a process does an "exec", machine state like FPU and debug
@@ -99,6 +99,11 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 int dump_fpu(struct pt_regs *regs, elf_fpregset_t *r)
 {
 	return 1;
+}
+
+unsigned long thread_saved_pc(struct task_struct *tsk)
+{
+	return task_pt_regs(tsk)->cp0_epc;
 }
 
 unsigned long get_wchan(struct task_struct *task)

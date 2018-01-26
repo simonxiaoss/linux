@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0
 hostprogs-y := vdsomunge
 
 obj-vdso := vgettimeofday.o datapage.o
@@ -75,5 +74,5 @@ $(MODLIB)/vdso: FORCE
 	@mkdir -p $(MODLIB)/vdso
 
 PHONY += vdso_install
-vdso_install: $(obj)/vdso.so.dbg $(MODLIB)/vdso
+vdso_install: $(obj)/vdso.so.dbg $(MODLIB)/vdso FORCE
 	$(call cmd,vdso_install)

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
 /*
  * Copyright (c) 2003+ Evgeniy Polyakov <johnpol@2ka.mxt.ru>
  *
@@ -21,8 +20,6 @@
 #define _XT_OSF_H
 
 #include <linux/types.h>
-#include <linux/ip.h>
-#include <linux/tcp.h>
 
 #define MAXGENRELEN		32
 

@@ -21,7 +21,6 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/string.h>
-#include <linux/sched/signal.h>
 
 #include "dmxdev.h"
 #include "dvbdev.h"
@@ -396,8 +395,7 @@ static int pt3_attach_fe(struct pt3_board *pt3, int i)
 	if (!try_module_get(cl->dev.driver->owner))
 		goto err_demod_i2c_unregister_device;
 
-	if (!strncmp(cl->name, TC90522_I2C_DEV_SAT,
-		     strlen(TC90522_I2C_DEV_SAT))) {
+	if (!strncmp(cl->name, TC90522_I2C_DEV_SAT, sizeof(cl->name))) {
 		struct qm1d1c0042_config tcfg;
 
 		tcfg = adap_conf[i].tuner_cfg.qm1d1c0042;
@@ -464,7 +462,7 @@ static int pt3_fetch_thread(void *data)
 
 		pt3_proc_dma(adap);
 
-		delay = PT3_FETCH_DELAY * NSEC_PER_MSEC;
+		delay = ktime_set(0, PT3_FETCH_DELAY * NSEC_PER_MSEC);
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		freezable_schedule_hrtimeout_range(&delay,
 					PT3_FETCH_DELAY_DELTA * NSEC_PER_MSEC,
@@ -472,6 +470,7 @@ static int pt3_fetch_thread(void *data)
 	}
 	dev_dbg(adap->dvb_adap.device, "PT3: [%s] exited\n",
 		adap->thread->comm);
+	adap->thread = NULL;
 	return 0;
 }
 
@@ -485,7 +484,6 @@ static int pt3_start_streaming(struct pt3_adapter *adap)
 	if (IS_ERR(thread)) {
 		int ret = PTR_ERR(thread);
 
-		adap->thread = NULL;
 		dev_warn(adap->dvb_adap.device,
 			 "PT3 (adap:%d, dmx:%d): failed to start kthread\n",
 			 adap->dvb_adap.num, adap->dmxdev.dvbdev->id);
@@ -508,7 +506,6 @@ static int pt3_stop_streaming(struct pt3_adapter *adap)
 
 	/* kill the fetching thread */
 	ret = kthread_stop(adap->thread);
-	adap->thread = NULL;
 	return ret;
 }
 
@@ -521,8 +518,14 @@ static int pt3_start_feed(struct dvb_demux_feed *feed)
 
 	adap = container_of(feed->demux, struct pt3_adapter, demux);
 	adap->num_feeds++;
-	if (adap->num_feeds > 1)
+	if (adap->thread)
 		return 0;
+	if (adap->num_feeds != 1) {
+		dev_warn(adap->dvb_adap.device,
+			 "%s: unmatched start/stop_feed in adap:%i/dmx:%i\n",
+			 __func__, adap->dvb_adap.num, adap->dmxdev.dvbdev->id);
+		adap->num_feeds = 1;
+	}
 
 	return pt3_start_streaming(adap);
 
@@ -794,8 +797,10 @@ static int pt3_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	strlcpy(i2c->name, DRV_NAME, sizeof(i2c->name));
 	i2c_set_adapdata(i2c, pt3);
 	ret = i2c_add_adapter(i2c);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to add i2c adapter\n");
 		goto err_i2cbuf;
+	}
 
 	for (i = 0; i < PT3_NUM_FE; i++) {
 		ret = pt3_alloc_adapter(pt3, i);

@@ -271,15 +271,12 @@ static bool is_prefix_bad(struct insn *insn)
 	int i;
 
 	for (i = 0; i < insn->prefixes.nbytes; i++) {
-		insn_attr_t attr;
-
-		attr = inat_get_opcode_attribute(insn->prefixes.bytes[i]);
-		switch (attr) {
-		case INAT_MAKE_PREFIX(INAT_PFX_ES):
-		case INAT_MAKE_PREFIX(INAT_PFX_CS):
-		case INAT_MAKE_PREFIX(INAT_PFX_DS):
-		case INAT_MAKE_PREFIX(INAT_PFX_SS):
-		case INAT_MAKE_PREFIX(INAT_PFX_LOCK):
+		switch (insn->prefixes.bytes[i]) {
+		case 0x26:	/* INAT_PFX_ES   */
+		case 0x2E:	/* INAT_PFX_CS   */
+		case 0x36:	/* INAT_PFX_DS   */
+		case 0x3E:	/* INAT_PFX_SS   */
+		case 0xF0:	/* INAT_PFX_LOCK */
 			return true;
 		}
 	}
@@ -519,7 +516,7 @@ struct uprobe_xol_ops {
 
 static inline int sizeof_long(void)
 {
-	return in_ia32_syscall() ? 4 : 8;
+	return is_ia32_task() ? 4 : 8;
 }
 
 static int default_pre_xol_op(struct arch_uprobe *auprobe, struct pt_regs *regs)
@@ -581,7 +578,7 @@ static void default_abort_op(struct arch_uprobe *auprobe, struct pt_regs *regs)
 	riprel_post_xol(auprobe, regs);
 }
 
-static const struct uprobe_xol_ops default_xol_ops = {
+static struct uprobe_xol_ops default_xol_ops = {
 	.pre_xol  = default_pre_xol_op,
 	.post_xol = default_post_xol_op,
 	.abort	  = default_abort_op,
@@ -698,7 +695,7 @@ static void branch_clear_offset(struct arch_uprobe *auprobe, struct insn *insn)
 		0, insn->immediate.nbytes);
 }
 
-static const struct uprobe_xol_ops branch_xol_ops = {
+static struct uprobe_xol_ops branch_xol_ops = {
 	.emulate  = branch_emulate_op,
 	.post_xol = branch_post_xol_op,
 };

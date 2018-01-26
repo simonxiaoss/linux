@@ -27,7 +27,6 @@
 #include <linux/mutex.h>
 #include <linux/goldfish.h>
 #include <asm/div64.h>
-#include <linux/dma-mapping.h>
 
 #include "goldfish_nand_reg.h"
 
@@ -100,11 +99,11 @@ static int goldfish_nand_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
 	loff_t ofs = instr->addr;
 	u32 len = instr->len;
-	s32 rem;
+	u32 rem;
 
 	if (ofs + len > mtd->size)
 		goto invalid_arg;
-	ofs = div_s64_rem(ofs, mtd->writesize, &rem);
+	rem = do_div(ofs, mtd->writesize);
 	if (rem)
 		goto invalid_arg;
 	ofs *= (mtd->writesize + mtd->oobsize);
@@ -114,8 +113,8 @@ static int goldfish_nand_erase(struct mtd_info *mtd, struct erase_info *instr)
 	len = len / mtd->writesize * (mtd->writesize + mtd->oobsize);
 
 	if (goldfish_nand_cmd(mtd, NAND_CMD_ERASE, ofs, len, NULL) != len) {
-		pr_err("%s: erase failed, start %llx, len %x, dev_size %llx, erase_size %x\n",
-		       __func__, ofs, len, mtd->size, mtd->erasesize);
+		pr_err("goldfish_nand_erase: erase failed, start %llx, len %x, dev_size %llx, erase_size %x\n",
+		       ofs, len, mtd->size, mtd->erasesize);
 		return -EIO;
 	}
 
@@ -125,15 +124,15 @@ static int goldfish_nand_erase(struct mtd_info *mtd, struct erase_info *instr)
 	return 0;
 
 invalid_arg:
-	pr_err("%s: invalid erase, start %llx, len %x, dev_size %llx, erase_size %x\n",
-	       __func__, ofs, len, mtd->size, mtd->erasesize);
+	pr_err("goldfish_nand_erase: invalid erase, start %llx, len %x, dev_size %llx, erase_size %x\n",
+	       ofs, len, mtd->size, mtd->erasesize);
 	return -EINVAL;
 }
 
 static int goldfish_nand_read_oob(struct mtd_info *mtd, loff_t ofs,
 				  struct mtd_oob_ops *ops)
 {
-	s32 rem;
+	u32 rem;
 
 	if (ofs + ops->len > mtd->size)
 		goto invalid_arg;
@@ -142,7 +141,7 @@ static int goldfish_nand_read_oob(struct mtd_info *mtd, loff_t ofs,
 	if (ops->ooblen + ops->ooboffs > mtd->oobsize)
 		goto invalid_arg;
 
-	ofs = div_s64_rem(ofs, mtd->writesize, &rem);
+	rem = do_div(ofs, mtd->writesize);
 	if (rem)
 		goto invalid_arg;
 	ofs *= (mtd->writesize + mtd->oobsize);
@@ -153,19 +152,19 @@ static int goldfish_nand_read_oob(struct mtd_info *mtd, loff_t ofs,
 	ofs += mtd->writesize + ops->ooboffs;
 	if (ops->oobbuf)
 		ops->oobretlen = goldfish_nand_cmd(mtd, NAND_CMD_READ, ofs,
-						   ops->ooblen, ops->oobbuf);
+						ops->ooblen, ops->oobbuf);
 	return 0;
 
 invalid_arg:
-	pr_err("%s: invalid read, start %llx, len %zx, ooblen %zx, dev_size %llx, write_size %x\n",
-	       __func__, ofs, ops->len, ops->ooblen, mtd->size, mtd->writesize);
+	pr_err("goldfish_nand_read_oob: invalid read, start %llx, len %zx, ooblen %zx, dev_size %llx, write_size %x\n",
+	       ofs, ops->len, ops->ooblen, mtd->size, mtd->writesize);
 	return -EINVAL;
 }
 
 static int goldfish_nand_write_oob(struct mtd_info *mtd, loff_t ofs,
 				   struct mtd_oob_ops *ops)
 {
-	s32 rem;
+	u32 rem;
 
 	if (ofs + ops->len > mtd->size)
 		goto invalid_arg;
@@ -174,7 +173,7 @@ static int goldfish_nand_write_oob(struct mtd_info *mtd, loff_t ofs,
 	if (ops->ooblen + ops->ooboffs > mtd->oobsize)
 		goto invalid_arg;
 
-	ofs = div_s64_rem(ofs, mtd->writesize, &rem);
+	rem = do_div(ofs, mtd->writesize);
 	if (rem)
 		goto invalid_arg;
 	ofs *= (mtd->writesize + mtd->oobsize);
@@ -185,24 +184,24 @@ static int goldfish_nand_write_oob(struct mtd_info *mtd, loff_t ofs,
 	ofs += mtd->writesize + ops->ooboffs;
 	if (ops->oobbuf)
 		ops->oobretlen = goldfish_nand_cmd(mtd, NAND_CMD_WRITE, ofs,
-						   ops->ooblen, ops->oobbuf);
+						ops->ooblen, ops->oobbuf);
 	return 0;
 
 invalid_arg:
-	pr_err("%s: invalid write, start %llx, len %zx, ooblen %zx, dev_size %llx, write_size %x\n",
-	       __func__, ofs, ops->len, ops->ooblen, mtd->size, mtd->writesize);
+	pr_err("goldfish_nand_write_oob: invalid write, start %llx, len %zx, ooblen %zx, dev_size %llx, write_size %x\n",
+	       ofs, ops->len, ops->ooblen, mtd->size, mtd->writesize);
 	return -EINVAL;
 }
 
 static int goldfish_nand_read(struct mtd_info *mtd, loff_t from, size_t len,
 			      size_t *retlen, u_char *buf)
 {
-	s32 rem;
+	u32 rem;
 
 	if (from + len > mtd->size)
 		goto invalid_arg;
 
-	from = div_s64_rem(from, mtd->writesize, &rem);
+	rem = do_div(from, mtd->writesize);
 	if (rem)
 		goto invalid_arg;
 	from *= (mtd->writesize + mtd->oobsize);
@@ -211,20 +210,20 @@ static int goldfish_nand_read(struct mtd_info *mtd, loff_t from, size_t len,
 	return 0;
 
 invalid_arg:
-	pr_err("%s: invalid read, start %llx, len %zx, dev_size %llx, write_size %x\n",
-	       __func__, from, len, mtd->size, mtd->writesize);
+	pr_err("goldfish_nand_read: invalid read, start %llx, len %zx, dev_size %llx, write_size %x\n",
+	       from, len, mtd->size, mtd->writesize);
 	return -EINVAL;
 }
 
 static int goldfish_nand_write(struct mtd_info *mtd, loff_t to, size_t len,
 			       size_t *retlen, const u_char *buf)
 {
-	s32 rem;
+	u32 rem;
 
 	if (to + len > mtd->size)
 		goto invalid_arg;
 
-	to = div_s64_rem(to, mtd->writesize, &rem);
+	rem = do_div(to, mtd->writesize);
 	if (rem)
 		goto invalid_arg;
 	to *= (mtd->writesize + mtd->oobsize);
@@ -233,19 +232,19 @@ static int goldfish_nand_write(struct mtd_info *mtd, loff_t to, size_t len,
 	return 0;
 
 invalid_arg:
-	pr_err("%s: invalid write, start %llx, len %zx, dev_size %llx, write_size %x\n",
-	       __func__, to, len, mtd->size, mtd->writesize);
+	pr_err("goldfish_nand_write: invalid write, start %llx, len %zx, dev_size %llx, write_size %x\n",
+	       to, len, mtd->size, mtd->writesize);
 	return -EINVAL;
 }
 
 static int goldfish_nand_block_isbad(struct mtd_info *mtd, loff_t ofs)
 {
-	s32 rem;
+	u32 rem;
 
 	if (ofs >= mtd->size)
 		goto invalid_arg;
 
-	ofs = div_s64_rem(ofs, mtd->writesize, &rem);
+	rem = do_div(ofs, mtd->erasesize);
 	if (rem)
 		goto invalid_arg;
 	ofs *= mtd->erasesize / mtd->writesize;
@@ -254,19 +253,19 @@ static int goldfish_nand_block_isbad(struct mtd_info *mtd, loff_t ofs)
 	return goldfish_nand_cmd(mtd, NAND_CMD_BLOCK_BAD_GET, ofs, 0, NULL);
 
 invalid_arg:
-	pr_err("%s: invalid arg, ofs %llx, dev_size %llx, write_size %x\n",
-	       __func__, ofs, mtd->size, mtd->writesize);
+	pr_err("goldfish_nand_block_isbad: invalid arg, ofs %llx, dev_size %llx, write_size %x\n",
+	       ofs, mtd->size, mtd->writesize);
 	return -EINVAL;
 }
 
 static int goldfish_nand_block_markbad(struct mtd_info *mtd, loff_t ofs)
 {
-	s32 rem;
+	u32 rem;
 
 	if (ofs >= mtd->size)
 		goto invalid_arg;
 
-	ofs = div_s64_rem(ofs, mtd->writesize, &rem);
+	rem = do_div(ofs, mtd->erasesize);
 	if (rem)
 		goto invalid_arg;
 	ofs *= mtd->erasesize / mtd->writesize;
@@ -277,26 +276,25 @@ static int goldfish_nand_block_markbad(struct mtd_info *mtd, loff_t ofs)
 	return 0;
 
 invalid_arg:
-	pr_err("%s: invalid arg, ofs %llx, dev_size %llx, write_size %x\n",
-	       __func__, ofs, mtd->size, mtd->writesize);
+	pr_err("goldfish_nand_block_markbad: invalid arg, ofs %llx, dev_size %llx, write_size %x\n",
+	       ofs, mtd->size, mtd->writesize);
 	return -EINVAL;
 }
 
 static int nand_setup_cmd_params(struct platform_device *pdev,
 				 struct goldfish_nand *nand)
 {
-	dma_addr_t dma_handle;
+	u64 paddr;
 	unsigned char __iomem  *base = nand->base;
 
-	nand->cmd_params = dmam_alloc_coherent(&pdev->dev,
-					       sizeof(struct cmd_params),
-					       &dma_handle, GFP_KERNEL);
-	if (!nand->cmd_params) {
-		dev_err(&pdev->dev, "allocate buffer failed\n");
-		return -ENOMEM;
-	}
-	writel((u32)((u64)dma_handle >> 32), base + NAND_CMD_PARAMS_ADDR_HIGH);
-	writel((u32)dma_handle, base + NAND_CMD_PARAMS_ADDR_LOW);
+	nand->cmd_params = devm_kzalloc(&pdev->dev,
+					sizeof(struct cmd_params), GFP_KERNEL);
+	if (!nand->cmd_params)
+		return -1;
+
+	paddr = __pa(nand->cmd_params);
+	writel((u32)(paddr >> 32), base + NAND_CMD_PARAMS_ADDR_HIGH);
+	writel((u32)paddr, base + NAND_CMD_PARAMS_ADDR_LOW);
 	return 0;
 }
 
@@ -321,7 +319,7 @@ static int goldfish_nand_init_device(struct platform_device *pdev,
 	mtd->oobavail = mtd->oobsize;
 	mtd->erasesize = readl(base + NAND_DEV_ERASE_SIZE) /
 			(mtd->writesize + mtd->oobsize) * mtd->writesize;
-	mtd->size = div_s64(mtd->size, mtd->writesize + mtd->oobsize);
+	do_div(mtd->size, mtd->writesize + mtd->oobsize);
 	mtd->size *= mtd->writesize;
 	dev_dbg(&pdev->dev,
 		"goldfish nand dev%d: size %llx, page %d, extra %d, erase %d\n",
@@ -340,8 +338,8 @@ static int goldfish_nand_init_device(struct platform_device *pdev,
 				   name);
 	if (result != name_len) {
 		dev_err(&pdev->dev,
-			"%s: failed to get dev name %d != %d\n",
-			       __func__, result, name_len);
+			"goldfish_nand_init_device failed to get dev name %d != %d\n",
+			       result, name_len);
 		return -ENODEV;
 	}
 	((char *)mtd->name)[name_len] = '\0';

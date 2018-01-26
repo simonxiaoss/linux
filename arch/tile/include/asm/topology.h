@@ -29,6 +29,12 @@ static inline int cpu_to_node(int cpu)
 	return cpu_2_node[cpu];
 }
 
+/*
+ * Returns the number of the node containing Node 'node'.
+ * This architecture is flat, so it is a pretty simple function!
+ */
+#define parent_node(node) (node)
+
 /* Returns a bitmask of CPUs on Node 'node'. */
 static inline const struct cpumask *cpumask_of_node(int node)
 {
@@ -37,6 +43,9 @@ static inline const struct cpumask *cpumask_of_node(int node)
 
 /* For now, use numa node -1 for global allocation. */
 #define pcibus_to_node(bus)		((void)(bus), -1)
+
+/* By definition, we create nodes based on online memory. */
+#define node_has_online_mem(nid) 1
 
 #endif /* CONFIG_NUMA */
 

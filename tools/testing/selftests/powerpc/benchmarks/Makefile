@@ -1,12 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0
-TEST_GEN_PROGS := gettimeofday context_switch mmap_bench futex_bench null_syscall
+TEST_PROGS := gettimeofday
 
 CFLAGS += -O2
 
+all: $(TEST_PROGS)
+
+$(TEST_PROGS): ../harness.c
+
 include ../../lib.mk
 
-$(TEST_GEN_PROGS): ../harness.c
-
-$(OUTPUT)/context_switch: ../utils.c
-$(OUTPUT)/context_switch: CFLAGS += -maltivec -mvsx -mabi=altivec
-$(OUTPUT)/context_switch: LDLIBS += -lpthread
+clean:
+	rm -f $(TEST_PROGS) *.o

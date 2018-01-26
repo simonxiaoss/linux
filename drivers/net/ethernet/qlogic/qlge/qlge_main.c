@@ -1092,7 +1092,8 @@ static int ql_get_next_chunk(struct ql_adapter *qdev, struct rx_ring *rx_ring,
 {
 	if (!rx_ring->pg_chunk.page) {
 		u64 map;
-		rx_ring->pg_chunk.page = alloc_pages(__GFP_COMP | GFP_ATOMIC,
+		rx_ring->pg_chunk.page = alloc_pages(__GFP_COLD | __GFP_COMP |
+						GFP_ATOMIC,
 						qdev->lbq_buf_order);
 		if (unlikely(!rx_ring->pg_chunk.page)) {
 			netif_err(qdev, drv, qdev->ndev,
@@ -1576,7 +1577,7 @@ static void ql_process_mac_rx_page(struct ql_adapter *qdev,
 		rx_ring->rx_dropped++;
 		goto err_out;
 	}
-	skb_put_data(skb, addr, hlen);
+	memcpy(skb_put(skb, hlen), addr, hlen);
 	netif_printk(qdev, rx_status, KERN_DEBUG, qdev->ndev,
 		     "%d bytes of headers and data in large. Chain page to new skb and pull tail.\n",
 		     length);
@@ -1653,7 +1654,7 @@ static void ql_process_mac_rx_skb(struct ql_adapter *qdev,
 				    dma_unmap_len(sbq_desc, maplen),
 				    PCI_DMA_FROMDEVICE);
 
-	skb_put_data(new_skb, skb->data, length);
+	memcpy(skb_put(new_skb, length), skb->data, length);
 
 	pci_dma_sync_single_for_device(qdev->pdev,
 				       dma_unmap_addr(sbq_desc, mapaddr),
@@ -1816,7 +1817,8 @@ static struct sk_buff *ql_build_rx_skb(struct ql_adapter *qdev,
 						    dma_unmap_len
 						    (sbq_desc, maplen),
 						    PCI_DMA_FROMDEVICE);
-			skb_put_data(skb, sbq_desc->p.skb->data, length);
+			memcpy(skb_put(skb, length),
+			       sbq_desc->p.skb->data, length);
 			pci_dma_sync_single_for_device(qdev->pdev,
 						       dma_unmap_addr
 						       (sbq_desc,
@@ -1890,6 +1892,7 @@ static struct sk_buff *ql_build_rx_skb(struct ql_adapter *qdev,
 			skb->len += length;
 			skb->data_len += length;
 			skb->truesize += length;
+			length -= length;
 			ql_update_mac_hdr_len(qdev, ib_mac_rsp,
 					      lbq_desc->p.pg_chunk.va,
 					      &hlen);
@@ -2332,7 +2335,7 @@ static int ql_napi_poll_msix(struct napi_struct *napi, int budget)
 	}
 
 	if (work_done < budget) {
-		napi_complete_done(napi, work_done);
+		napi_complete(napi);
 		ql_enable_completion_interrupt(qdev, rx_ring->irq);
 	}
 	return work_done;
@@ -4684,8 +4687,7 @@ static int ql_init_device(struct pci_dev *pdev, struct net_device *ndev,
 	/*
 	 * Set up the operating parameters.
 	 */
-	qdev->workqueue = alloc_ordered_workqueue("%s", WQ_MEM_RECLAIM,
-						  ndev->name);
+	qdev->workqueue = create_singlethread_workqueue(ndev->name);
 	INIT_DELAYED_WORK(&qdev->asic_reset_work, ql_asic_reset_work);
 	INIT_DELAYED_WORK(&qdev->mpi_reset_work, ql_mpi_reset_work);
 	INIT_DELAYED_WORK(&qdev->mpi_work, ql_mpi_work);
@@ -4724,9 +4726,9 @@ static const struct net_device_ops qlge_netdev_ops = {
 	.ndo_vlan_rx_kill_vid	= qlge_vlan_rx_kill_vid,
 };
 
-static void ql_timer(struct timer_list *t)
+static void ql_timer(unsigned long data)
 {
-	struct ql_adapter *qdev = from_timer(qdev, t, timer);
+	struct ql_adapter *qdev = (struct ql_adapter *)data;
 	u32 var = 0;
 
 	var = ql_read32(qdev, STS);
@@ -4787,13 +4789,6 @@ static int qlge_probe(struct pci_dev *pdev,
 	ndev->ethtool_ops = &qlge_ethtool_ops;
 	ndev->watchdog_timeo = 10 * HZ;
 
-	/* MTU range: this driver only supports 1500 or 9000, so this only
-	 * filters out values above or below, and we'll rely on
-	 * qlge_change_mtu to make sure only 1500 or 9000 are allowed
-	 */
-	ndev->min_mtu = ETH_DATA_LEN;
-	ndev->max_mtu = 9000;
-
 	err = register_netdev(ndev);
 	if (err) {
 		dev_err(&pdev->dev, "net device registration failed.\n");
@@ -4805,8 +4800,11 @@ static int qlge_probe(struct pci_dev *pdev,
 	/* Start up the timer to trigger EEH if
 	 * the bus goes dead
 	 */
-	timer_setup(&qdev->timer, ql_timer, TIMER_DEFERRABLE);
-	mod_timer(&qdev->timer, jiffies + (5*HZ));
+	init_timer_deferrable(&qdev->timer);
+	qdev->timer.data = (unsigned long)qdev;
+	qdev->timer.function = ql_timer;
+	qdev->timer.expires = jiffies + (5*HZ);
+	add_timer(&qdev->timer);
 	ql_link_off(qdev);
 	ql_display_dev_info(ndev);
 	atomic_set(&qdev->lb_count, 0);
@@ -4848,6 +4846,7 @@ static void ql_eeh_close(struct net_device *ndev)
 	}
 
 	/* Disabling the timer */
+	del_timer_sync(&qdev->timer);
 	ql_cancel_all_work_sync(qdev);
 
 	for (i = 0; i < qdev->rss_ring_count; i++)
@@ -4874,7 +4873,6 @@ static pci_ers_result_t qlge_io_error_detected(struct pci_dev *pdev,
 		return PCI_ERS_RESULT_CAN_RECOVER;
 	case pci_channel_io_frozen:
 		netif_device_detach(ndev);
-		del_timer_sync(&qdev->timer);
 		if (netif_running(ndev))
 			ql_eeh_close(ndev);
 		pci_disable_device(pdev);
@@ -4882,7 +4880,6 @@ static pci_ers_result_t qlge_io_error_detected(struct pci_dev *pdev,
 	case pci_channel_io_perm_failure:
 		dev_err(&pdev->dev,
 			"%s: pci_channel_io_perm_failure.\n", __func__);
-		del_timer_sync(&qdev->timer);
 		ql_eeh_close(ndev);
 		set_bit(QL_EEH_FATAL, &qdev->flags);
 		return PCI_ERS_RESULT_DISCONNECT;

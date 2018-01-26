@@ -1,8 +1,6 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __NVKM_FIFO_H__
 #define __NVKM_FIFO_H__
 #include <core/engine.h>
-#include <core/object.h>
 #include <core/event.h>
 
 #define NVKM_FIFO_CHID_NR 4096
@@ -23,7 +21,7 @@ struct nvkm_fifo_chan {
 	u16 chid;
 	struct nvkm_gpuobj *inst;
 	struct nvkm_gpuobj *push;
-	struct nvkm_vmm *vmm;
+	struct nvkm_vm *vm;
 	void __iomem *user;
 	u64 addr;
 	u32 size;
@@ -42,7 +40,6 @@ struct nvkm_fifo {
 
 	struct nvkm_event uevent; /* async user trigger */
 	struct nvkm_event cevent; /* channel creation event */
-	struct nvkm_event kevent; /* channel killed */
 };
 
 void nvkm_fifo_pause(struct nvkm_fifo *, unsigned long *);
@@ -63,12 +60,8 @@ int nv50_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
 int g84_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
 int gf100_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
 int gk104_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
-int gk110_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
 int gk208_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
 int gk20a_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
-int gm107_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
-int gm200_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
+int gm204_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
 int gm20b_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
-int gp100_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
-int gp10b_fifo_new(struct nvkm_device *, int, struct nvkm_fifo **);
 #endif

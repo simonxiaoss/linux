@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #include <generated/utsrelease.h>
 
 /* Simply sanity version stamp for modules. */
@@ -25,11 +24,10 @@
 #ifndef MODULE_ARCH_VERMAGIC
 #define MODULE_ARCH_VERMAGIC ""
 #endif
-#ifdef RANDSTRUCT_PLUGIN
-#include <generated/randomize_layout_hash.h>
-#define MODULE_RANDSTRUCT_PLUGIN "RANDSTRUCT_PLUGIN_" RANDSTRUCT_HASHED_SEED
+#ifdef RETPOLINE
+#define MODULE_VERMAGIC_RETPOLINE "retpoline "
 #else
-#define MODULE_RANDSTRUCT_PLUGIN
+#define MODULE_VERMAGIC_RETPOLINE ""
 #endif
 
 #define VERMAGIC_STRING 						\
@@ -37,5 +35,5 @@
 	MODULE_VERMAGIC_SMP MODULE_VERMAGIC_PREEMPT 			\
 	MODULE_VERMAGIC_MODULE_UNLOAD MODULE_VERMAGIC_MODVERSIONS	\
 	MODULE_ARCH_VERMAGIC						\
-	MODULE_RANDSTRUCT_PLUGIN
+	MODULE_VERMAGIC_RETPOLINE
 

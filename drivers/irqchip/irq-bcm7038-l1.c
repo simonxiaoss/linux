@@ -12,6 +12,7 @@
 #define pr_fmt(fmt)	KBUILD_MODNAME	": " fmt
 
 #include <linux/bitops.h>
+#include <linux/kconfig.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -212,8 +213,6 @@ static int bcm7038_l1_set_affinity(struct irq_data *d,
 		__bcm7038_l1_unmask(d, first_cpu);
 
 	raw_spin_unlock_irqrestore(&intc->lock, flags);
-	irq_data_update_effective_affinity(d, cpumask_of(first_cpu));
-
 	return 0;
 }
 
@@ -301,7 +300,6 @@ static int bcm7038_l1_map(struct irq_domain *d, unsigned int virq,
 {
 	irq_set_chip_and_handler(virq, &bcm7038_l1_irq_chip, handle_level_irq);
 	irq_set_chip_data(virq, d->host_data);
-	irqd_set_single_target(irq_desc_get_irq_data(irq_to_desc(virq)));
 	return 0;
 }
 

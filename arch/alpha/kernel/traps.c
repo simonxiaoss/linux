@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * arch/alpha/kernel/traps.c
  *
@@ -11,16 +10,15 @@
 
 #include <linux/jiffies.h>
 #include <linux/mm.h>
-#include <linux/sched/signal.h>
-#include <linux/sched/debug.h>
+#include <linux/sched.h>
 #include <linux/tty.h>
 #include <linux/delay.h>
-#include <linux/extable.h>
+#include <linux/module.h>
 #include <linux/kallsyms.h>
 #include <linux/ratelimit.h>
 
 #include <asm/gentrap.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/unaligned.h>
 #include <asm/sysinfo.h>
 #include <asm/hwrpb.h>
@@ -194,10 +192,8 @@ die_if_kernel(char * str, struct pt_regs *regs, long err, unsigned long *r9_15)
 static long dummy_emul(void) { return 0; }
 long (*alpha_fp_emul_imprecise)(struct pt_regs *regs, unsigned long writemask)
   = (void *)dummy_emul;
-EXPORT_SYMBOL_GPL(alpha_fp_emul_imprecise);
 long (*alpha_fp_emul) (unsigned long pc)
   = (void *)dummy_emul;
-EXPORT_SYMBOL_GPL(alpha_fp_emul);
 #else
 long alpha_fp_emul_imprecise(struct pt_regs *regs, unsigned long writemask);
 long alpha_fp_emul (unsigned long pc);
@@ -281,7 +277,7 @@ do_entIF(unsigned long type, struct pt_regs *regs)
 	      case 1: /* bugcheck */
 		info.si_signo = SIGTRAP;
 		info.si_errno = 0;
-		info.si_code = TRAP_FIXME;
+		info.si_code = __SI_FAULT;
 		info.si_addr = (void __user *) regs->pc;
 		info.si_trapno = 0;
 		send_sig_info(SIGTRAP, &info, current);
@@ -321,7 +317,7 @@ do_entIF(unsigned long type, struct pt_regs *regs)
 			break;
 		case GEN_ROPRAND:
 			signo = SIGFPE;
-			code = FPE_FIXME;
+			code = __SI_FAULT;
 			break;
 
 		case GEN_DECOVF:
@@ -343,7 +339,7 @@ do_entIF(unsigned long type, struct pt_regs *regs)
 		case GEN_SUBRNG7:
 		default:
 			signo = SIGTRAP;
-			code = TRAP_FIXME;
+			code = __SI_FAULT;
 			break;
 		}
 
@@ -485,8 +481,12 @@ do_entUna(void * va, unsigned long opcode, unsigned long reg,
 		"	extwl %1,%3,%1\n"
 		"	extwh %2,%3,%2\n"
 		"3:\n"
-		EXC(1b,3b,%1,%0)
-		EXC(2b,3b,%2,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %1,3b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %2,3b-2b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2)
 			: "r"(va), "0"(0));
 		if (error)
@@ -501,8 +501,12 @@ do_entUna(void * va, unsigned long opcode, unsigned long reg,
 		"	extll %1,%3,%1\n"
 		"	extlh %2,%3,%2\n"
 		"3:\n"
-		EXC(1b,3b,%1,%0)
-		EXC(2b,3b,%2,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %1,3b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %2,3b-2b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2)
 			: "r"(va), "0"(0));
 		if (error)
@@ -517,8 +521,12 @@ do_entUna(void * va, unsigned long opcode, unsigned long reg,
 		"	extql %1,%3,%1\n"
 		"	extqh %2,%3,%2\n"
 		"3:\n"
-		EXC(1b,3b,%1,%0)
-		EXC(2b,3b,%2,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %1,3b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %2,3b-2b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2)
 			: "r"(va), "0"(0));
 		if (error)
@@ -542,10 +550,16 @@ do_entUna(void * va, unsigned long opcode, unsigned long reg,
 		"3:	stq_u %2,1(%5)\n"
 		"4:	stq_u %1,0(%5)\n"
 		"5:\n"
-		EXC(1b,5b,%2,%0)
-		EXC(2b,5b,%1,%0)
-		EXC(3b,5b,$31,%0)
-		EXC(4b,5b,$31,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %2,5b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %1,5b-2b(%0)\n"
+		"	.long 3b - .\n"
+		"	lda $31,5b-3b(%0)\n"
+		"	.long 4b - .\n"
+		"	lda $31,5b-4b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2),
 			  "=&r"(tmp3), "=&r"(tmp4)
 			: "r"(va), "r"(una_reg(reg)), "0"(0));
@@ -566,10 +580,16 @@ do_entUna(void * va, unsigned long opcode, unsigned long reg,
 		"3:	stq_u %2,3(%5)\n"
 		"4:	stq_u %1,0(%5)\n"
 		"5:\n"
-		EXC(1b,5b,%2,%0)
-		EXC(2b,5b,%1,%0)
-		EXC(3b,5b,$31,%0)
-		EXC(4b,5b,$31,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %2,5b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %1,5b-2b(%0)\n"
+		"	.long 3b - .\n"
+		"	lda $31,5b-3b(%0)\n"
+		"	.long 4b - .\n"
+		"	lda $31,5b-4b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2),
 			  "=&r"(tmp3), "=&r"(tmp4)
 			: "r"(va), "r"(una_reg(reg)), "0"(0));
@@ -590,10 +610,16 @@ do_entUna(void * va, unsigned long opcode, unsigned long reg,
 		"3:	stq_u %2,7(%5)\n"
 		"4:	stq_u %1,0(%5)\n"
 		"5:\n"
-		EXC(1b,5b,%2,%0)
-		EXC(2b,5b,%1,%0)
-		EXC(3b,5b,$31,%0)
-		EXC(4b,5b,$31,%0)
+		".section __ex_table,\"a\"\n\t"
+		"	.long 1b - .\n"
+		"	lda %2,5b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %1,5b-2b(%0)\n"
+		"	.long 3b - .\n"
+		"	lda $31,5b-3b(%0)\n"
+		"	.long 4b - .\n"
+		"	lda $31,5b-4b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2),
 			  "=&r"(tmp3), "=&r"(tmp4)
 			: "r"(va), "r"(una_reg(reg)), "0"(0));
@@ -775,7 +801,7 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 	/* Don't bother reading ds in the access check since we already
 	   know that this came from the user.  Also rely on the fact that
 	   the page at TASK_SIZE is unmapped and so can't be touched anyway. */
-	if ((unsigned long)va >= TASK_SIZE)
+	if (!__access_ok((unsigned long)va, 0, USER_DS))
 		goto give_sigsegv;
 
 	++unaligned[1].count;
@@ -808,8 +834,12 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 		"	extwl %1,%3,%1\n"
 		"	extwh %2,%3,%2\n"
 		"3:\n"
-		EXC(1b,3b,%1,%0)
-		EXC(2b,3b,%2,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %1,3b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %2,3b-2b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2)
 			: "r"(va), "0"(0));
 		if (error)
@@ -824,8 +854,12 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 		"	extll %1,%3,%1\n"
 		"	extlh %2,%3,%2\n"
 		"3:\n"
-		EXC(1b,3b,%1,%0)
-		EXC(2b,3b,%2,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %1,3b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %2,3b-2b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2)
 			: "r"(va), "0"(0));
 		if (error)
@@ -840,8 +874,12 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 		"	extql %1,%3,%1\n"
 		"	extqh %2,%3,%2\n"
 		"3:\n"
-		EXC(1b,3b,%1,%0)
-		EXC(2b,3b,%2,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %1,3b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %2,3b-2b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2)
 			: "r"(va), "0"(0));
 		if (error)
@@ -856,8 +894,12 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 		"	extll %1,%3,%1\n"
 		"	extlh %2,%3,%2\n"
 		"3:\n"
-		EXC(1b,3b,%1,%0)
-		EXC(2b,3b,%2,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %1,3b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %2,3b-2b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2)
 			: "r"(va), "0"(0));
 		if (error)
@@ -872,8 +914,12 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 		"	extql %1,%3,%1\n"
 		"	extqh %2,%3,%2\n"
 		"3:\n"
-		EXC(1b,3b,%1,%0)
-		EXC(2b,3b,%2,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %1,3b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %2,3b-2b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2)
 			: "r"(va), "0"(0));
 		if (error)
@@ -897,10 +943,16 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 		"3:	stq_u %2,1(%5)\n"
 		"4:	stq_u %1,0(%5)\n"
 		"5:\n"
-		EXC(1b,5b,%2,%0)
-		EXC(2b,5b,%1,%0)
-		EXC(3b,5b,$31,%0)
-		EXC(4b,5b,$31,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %2,5b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %1,5b-2b(%0)\n"
+		"	.long 3b - .\n"
+		"	lda $31,5b-3b(%0)\n"
+		"	.long 4b - .\n"
+		"	lda $31,5b-4b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2),
 			  "=&r"(tmp3), "=&r"(tmp4)
 			: "r"(va), "r"(*reg_addr), "0"(0));
@@ -925,10 +977,16 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 		"3:	stq_u %2,3(%5)\n"
 		"4:	stq_u %1,0(%5)\n"
 		"5:\n"
-		EXC(1b,5b,%2,%0)
-		EXC(2b,5b,%1,%0)
-		EXC(3b,5b,$31,%0)
-		EXC(4b,5b,$31,%0)
+		".section __ex_table,\"a\"\n"
+		"	.long 1b - .\n"
+		"	lda %2,5b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %1,5b-2b(%0)\n"
+		"	.long 3b - .\n"
+		"	lda $31,5b-3b(%0)\n"
+		"	.long 4b - .\n"
+		"	lda $31,5b-4b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2),
 			  "=&r"(tmp3), "=&r"(tmp4)
 			: "r"(va), "r"(*reg_addr), "0"(0));
@@ -953,10 +1011,16 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 		"3:	stq_u %2,7(%5)\n"
 		"4:	stq_u %1,0(%5)\n"
 		"5:\n"
-		EXC(1b,5b,%2,%0)
-		EXC(2b,5b,%1,%0)
-		EXC(3b,5b,$31,%0)
-		EXC(4b,5b,$31,%0)
+		".section __ex_table,\"a\"\n\t"
+		"	.long 1b - .\n"
+		"	lda %2,5b-1b(%0)\n"
+		"	.long 2b - .\n"
+		"	lda %1,5b-2b(%0)\n"
+		"	.long 3b - .\n"
+		"	lda $31,5b-3b(%0)\n"
+		"	.long 4b - .\n"
+		"	lda $31,5b-4b(%0)\n"
+		".previous"
 			: "=r"(error), "=&r"(tmp1), "=&r"(tmp2),
 			  "=&r"(tmp3), "=&r"(tmp4)
 			: "r"(va), "r"(*reg_addr), "0"(0));
@@ -982,7 +1046,7 @@ give_sigsegv:
 	/* We need to replicate some of the logic in mm/fault.c,
 	   since we don't have access to the fault code in the
 	   exception handling return path.  */
-	if ((unsigned long)va >= TASK_SIZE)
+	if (!__access_ok((unsigned long)va, 0, USER_DS))
 		info.si_code = SEGV_ACCERR;
 	else {
 		struct mm_struct *mm = current->mm;

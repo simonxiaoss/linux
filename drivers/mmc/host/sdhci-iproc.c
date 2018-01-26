@@ -26,7 +26,6 @@ struct sdhci_iproc_data {
 	const struct sdhci_pltfm_data *pdata;
 	u32 caps;
 	u32 caps1;
-	u32 mmc_caps;
 };
 
 struct sdhci_iproc_host {
@@ -143,14 +142,6 @@ static void sdhci_iproc_writeb(struct sdhci_host *host, u8 val, int reg)
 }
 
 static const struct sdhci_ops sdhci_iproc_ops = {
-	.set_clock = sdhci_set_clock,
-	.get_max_clock = sdhci_pltfm_clk_get_max_clock,
-	.set_bus_width = sdhci_set_bus_width,
-	.reset = sdhci_reset,
-	.set_uhs_signaling = sdhci_set_uhs_signaling,
-};
-
-static const struct sdhci_ops sdhci_iproc_32only_ops = {
 	.read_l = sdhci_iproc_readl,
 	.read_w = sdhci_iproc_readw,
 	.read_b = sdhci_iproc_readb,
@@ -164,28 +155,6 @@ static const struct sdhci_ops sdhci_iproc_32only_ops = {
 	.set_uhs_signaling = sdhci_set_uhs_signaling,
 };
 
-static const struct sdhci_pltfm_data sdhci_iproc_cygnus_pltfm_data = {
-	.quirks = SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK,
-	.quirks2 = SDHCI_QUIRK2_ACMD23_BROKEN,
-	.ops = &sdhci_iproc_32only_ops,
-};
-
-static const struct sdhci_iproc_data iproc_cygnus_data = {
-	.pdata = &sdhci_iproc_cygnus_pltfm_data,
-	.caps = ((0x1 << SDHCI_MAX_BLOCK_SHIFT)
-			& SDHCI_MAX_BLOCK_MASK) |
-		SDHCI_CAN_VDD_330 |
-		SDHCI_CAN_VDD_180 |
-		SDHCI_CAN_DO_SUSPEND |
-		SDHCI_CAN_DO_HISPD |
-		SDHCI_CAN_DO_ADMA2 |
-		SDHCI_CAN_DO_SDMA,
-	.caps1 = SDHCI_DRIVER_TYPE_C |
-		 SDHCI_DRIVER_TYPE_D |
-		 SDHCI_SUPPORT_DDR50,
-	.mmc_caps = MMC_CAP_1_8V_DDR,
-};
-
 static const struct sdhci_pltfm_data sdhci_iproc_pltfm_data = {
 	.quirks = SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK |
 		  SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12,
@@ -195,43 +164,12 @@ static const struct sdhci_pltfm_data sdhci_iproc_pltfm_data = {
 
 static const struct sdhci_iproc_data iproc_data = {
 	.pdata = &sdhci_iproc_pltfm_data,
-	.caps = ((0x1 << SDHCI_MAX_BLOCK_SHIFT)
-			& SDHCI_MAX_BLOCK_MASK) |
-		SDHCI_CAN_VDD_330 |
-		SDHCI_CAN_VDD_180 |
-		SDHCI_CAN_DO_SUSPEND |
-		SDHCI_CAN_DO_HISPD |
-		SDHCI_CAN_DO_ADMA2 |
-		SDHCI_CAN_DO_SDMA,
-	.caps1 = SDHCI_DRIVER_TYPE_C |
-		 SDHCI_DRIVER_TYPE_D |
-		 SDHCI_SUPPORT_DDR50,
-	.mmc_caps = MMC_CAP_1_8V_DDR,
-};
-
-static const struct sdhci_pltfm_data sdhci_bcm2835_pltfm_data = {
-	.quirks = SDHCI_QUIRK_BROKEN_CARD_DETECTION |
-		  SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK |
-		  SDHCI_QUIRK_MISSING_CAPS |
-		  SDHCI_QUIRK_NO_HISPD_BIT,
-	.ops = &sdhci_iproc_32only_ops,
-};
-
-static const struct sdhci_iproc_data bcm2835_data = {
-	.pdata = &sdhci_bcm2835_pltfm_data,
-	.caps = ((0x1 << SDHCI_MAX_BLOCK_SHIFT)
-			& SDHCI_MAX_BLOCK_MASK) |
-		SDHCI_CAN_VDD_330 |
-		SDHCI_CAN_DO_HISPD,
-	.caps1 = SDHCI_DRIVER_TYPE_A |
-		 SDHCI_DRIVER_TYPE_C,
-	.mmc_caps = 0x00000000,
+	.caps = 0x05E90000,
+	.caps1 = 0x00000064,
 };
 
 static const struct of_device_id sdhci_iproc_of_match[] = {
-	{ .compatible = "brcm,bcm2835-sdhci", .data = &bcm2835_data },
-	{ .compatible = "brcm,sdhci-iproc-cygnus", .data = &iproc_cygnus_data},
-	{ .compatible = "brcm,sdhci-iproc", .data = &iproc_data },
+	{ .compatible = "brcm,sdhci-iproc-cygnus", .data = &iproc_data },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, sdhci_iproc_of_match);
@@ -262,16 +200,12 @@ static int sdhci_iproc_probe(struct platform_device *pdev)
 	mmc_of_parse(host->mmc);
 	sdhci_get_of_property(pdev);
 
-	host->mmc->caps |= iproc_host->data->mmc_caps;
+	/* Enable EMMC 1/8V DDR capable */
+	host->mmc->caps |= MMC_CAP_1_8V_DDR;
 
 	pltfm_host->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(pltfm_host->clk)) {
 		ret = PTR_ERR(pltfm_host->clk);
-		goto err;
-	}
-	ret = clk_prepare_enable(pltfm_host->clk);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to enable host clk\n");
 		goto err;
 	}
 
@@ -280,27 +214,26 @@ static int sdhci_iproc_probe(struct platform_device *pdev)
 		host->caps1 = iproc_host->data->caps1;
 	}
 
-	ret = sdhci_add_host(host);
-	if (ret)
-		goto err_clk;
+	return sdhci_add_host(host);
 
-	return 0;
-
-err_clk:
-	clk_disable_unprepare(pltfm_host->clk);
 err:
 	sdhci_pltfm_free(pdev);
 	return ret;
+}
+
+static int sdhci_iproc_remove(struct platform_device *pdev)
+{
+	return sdhci_pltfm_unregister(pdev);
 }
 
 static struct platform_driver sdhci_iproc_driver = {
 	.driver = {
 		.name = "sdhci-iproc",
 		.of_match_table = sdhci_iproc_of_match,
-		.pm = &sdhci_pltfm_pmops,
+		.pm = SDHCI_PLTFM_PMOPS,
 	},
 	.probe = sdhci_iproc_probe,
-	.remove = sdhci_pltfm_unregister,
+	.remove = sdhci_iproc_remove,
 };
 module_platform_driver(sdhci_iproc_driver);
 

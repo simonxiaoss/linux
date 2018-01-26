@@ -189,7 +189,7 @@ static int ak4642_lout_event(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_POST_PMU:
 	case SND_SOC_DAPM_POST_PMD:
 		/* Power save mode OFF */
-		msleep(300);
+		mdelay(300);
 		snd_soc_update_bits(codec, SG_SL2, LOPS, 0);
 		break;
 	}
@@ -433,7 +433,7 @@ static int ak4642_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 static int ak4642_set_mcko(struct snd_soc_codec *codec,
 			   u32 frequency)
 {
-	static const u32 fs_list[] = {
+	u32 fs_list[] = {
 		[0] = 8000,
 		[1] = 12000,
 		[2] = 16000,
@@ -447,7 +447,7 @@ static int ak4642_set_mcko(struct snd_soc_codec *codec,
 		[14] = 29400,
 		[15] = 44100,
 	};
-	static const u32 ps_list[] = {
+	u32 ps_list[] = {
 		[0] = 256,
 		[1] = 128,
 		[2] = 64,
@@ -523,23 +523,15 @@ static struct snd_soc_dai_driver ak4642_dai = {
 	.symmetric_rates = 1,
 };
 
-static int ak4642_suspend(struct snd_soc_codec *codec)
-{
-	struct regmap *regmap = dev_get_regmap(codec->dev, NULL);
-
-	regcache_cache_only(regmap, true);
-	regcache_mark_dirty(regmap);
-	return 0;
-}
-
 static int ak4642_resume(struct snd_soc_codec *codec)
 {
 	struct regmap *regmap = dev_get_regmap(codec->dev, NULL);
 
-	regcache_cache_only(regmap, false);
+	regcache_mark_dirty(regmap);
 	regcache_sync(regmap);
 	return 0;
 }
+
 static int ak4642_probe(struct snd_soc_codec *codec)
 {
 	struct ak4642_priv *priv = snd_soc_codec_get_drvdata(codec);
@@ -550,19 +542,16 @@ static int ak4642_probe(struct snd_soc_codec *codec)
 	return 0;
 }
 
-static const struct snd_soc_codec_driver soc_codec_dev_ak4642 = {
+static struct snd_soc_codec_driver soc_codec_dev_ak4642 = {
 	.probe			= ak4642_probe,
-	.suspend		= ak4642_suspend,
 	.resume			= ak4642_resume,
 	.set_bias_level		= ak4642_set_bias_level,
-	.component_driver = {
-		.controls		= ak4642_snd_controls,
-		.num_controls		= ARRAY_SIZE(ak4642_snd_controls),
-		.dapm_widgets		= ak4642_dapm_widgets,
-		.num_dapm_widgets	= ARRAY_SIZE(ak4642_dapm_widgets),
-		.dapm_routes		= ak4642_intercon,
-		.num_dapm_routes	= ARRAY_SIZE(ak4642_intercon),
-	},
+	.controls		= ak4642_snd_controls,
+	.num_controls		= ARRAY_SIZE(ak4642_snd_controls),
+	.dapm_widgets		= ak4642_dapm_widgets,
+	.num_dapm_widgets	= ARRAY_SIZE(ak4642_dapm_widgets),
+	.dapm_routes		= ak4642_intercon,
+	.num_dapm_routes	= ARRAY_SIZE(ak4642_intercon),
 };
 
 static const struct regmap_config ak4642_regmap = {
@@ -622,7 +611,9 @@ static struct clk *ak4642_of_parse_mcko(struct device *dev)
 
 	of_property_read_string(np, "clock-output-names", &clk_name);
 
-	clk = clk_register_fixed_rate(dev, clk_name, parent_clk_name, 0, rate);
+	clk = clk_register_fixed_rate(dev, clk_name, parent_clk_name,
+				      (parent_clk_name) ? 0 : CLK_IS_ROOT,
+				      rate);
 	if (!IS_ERR(clk))
 		of_clk_add_provider(np, of_clk_src_simple_get, clk);
 

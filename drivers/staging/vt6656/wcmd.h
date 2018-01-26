@@ -12,6 +12,9 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
  * File: wcmd.h
  *
@@ -51,9 +54,9 @@ enum vnt_cmd_state {
 
 struct vnt_private;
 
-void vnt_reset_command_timer(struct vnt_private *priv);
+void vnt_reset_command_timer(struct vnt_private *);
 
-int vnt_schedule_command(struct vnt_private *priv, enum vnt_cmd);
+int vnt_schedule_command(struct vnt_private *, enum vnt_cmd);
 
 void vnt_run_command(struct work_struct *work);
 

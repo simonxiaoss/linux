@@ -28,20 +28,13 @@ nvkm_device_tegra_power_up(struct nvkm_device_tegra *tdev)
 {
 	int ret;
 
-	if (tdev->vdd) {
-		ret = regulator_enable(tdev->vdd);
-		if (ret)
-			goto err_power;
-	}
+	ret = regulator_enable(tdev->vdd);
+	if (ret)
+		goto err_power;
 
 	ret = clk_prepare_enable(tdev->clk);
 	if (ret)
 		goto err_clk;
-	if (tdev->clk_ref) {
-		ret = clk_prepare_enable(tdev->clk_ref);
-		if (ret)
-			goto err_clk_ref;
-	}
 	ret = clk_prepare_enable(tdev->clk_pwr);
 	if (ret)
 		goto err_clk_pwr;
@@ -51,12 +44,10 @@ nvkm_device_tegra_power_up(struct nvkm_device_tegra *tdev)
 	reset_control_assert(tdev->rst);
 	udelay(10);
 
-	if (!tdev->pdev->dev.pm_domain) {
-		ret = tegra_powergate_remove_clamping(TEGRA_POWERGATE_3D);
-		if (ret)
-			goto err_clamp;
-		udelay(10);
-	}
+	ret = tegra_powergate_remove_clamping(TEGRA_POWERGATE_3D);
+	if (ret)
+		goto err_clamp;
+	udelay(10);
 
 	reset_control_deassert(tdev->rst);
 	udelay(10);
@@ -66,13 +57,9 @@ nvkm_device_tegra_power_up(struct nvkm_device_tegra *tdev)
 err_clamp:
 	clk_disable_unprepare(tdev->clk_pwr);
 err_clk_pwr:
-	if (tdev->clk_ref)
-		clk_disable_unprepare(tdev->clk_ref);
-err_clk_ref:
 	clk_disable_unprepare(tdev->clk);
 err_clk:
-	if (tdev->vdd)
-		regulator_disable(tdev->vdd);
+	regulator_disable(tdev->vdd);
 err_power:
 	return ret;
 }
@@ -80,21 +67,14 @@ err_power:
 static int
 nvkm_device_tegra_power_down(struct nvkm_device_tegra *tdev)
 {
-	int ret;
+	reset_control_assert(tdev->rst);
+	udelay(10);
 
 	clk_disable_unprepare(tdev->clk_pwr);
-	if (tdev->clk_ref)
-		clk_disable_unprepare(tdev->clk_ref);
 	clk_disable_unprepare(tdev->clk);
 	udelay(10);
 
-	if (tdev->vdd) {
-		ret = regulator_disable(tdev->vdd);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
+	return regulator_disable(tdev->vdd);
 }
 
 static void
@@ -112,7 +92,7 @@ nvkm_device_tegra_probe_iommu(struct nvkm_device_tegra *tdev)
 
 	if (iommu_present(&platform_bus_type)) {
 		tdev->iommu.domain = iommu_domain_alloc(&platform_bus_type);
-		if (!tdev->iommu.domain)
+		if (IS_ERR(tdev->iommu.domain))
 			goto error;
 
 		/*
@@ -136,7 +116,7 @@ nvkm_device_tegra_probe_iommu(struct nvkm_device_tegra *tdev)
 		if (ret)
 			goto free_domain;
 
-		ret = nvkm_mm_init(&tdev->iommu.mm, 0, 0,
+		ret = nvkm_mm_init(&tdev->iommu.mm, 0,
 				   (1ULL << tdev->func->iommu_bit) >>
 				   tdev->iommu.pgshift, 1);
 		if (ret)
@@ -201,11 +181,13 @@ static irqreturn_t
 nvkm_device_tegra_intr(int irq, void *arg)
 {
 	struct nvkm_device_tegra *tdev = arg;
-	struct nvkm_device *device = &tdev->device;
+	struct nvkm_mc *mc = tdev->device.mc;
 	bool handled = false;
-	nvkm_mc_intr_unarm(device);
-	nvkm_mc_intr(device, &handled);
-	nvkm_mc_intr_rearm(device);
+	if (likely(mc)) {
+		nvkm_mc_intr_unarm(mc);
+		nvkm_mc_intr(mc, &handled);
+		nvkm_mc_intr_rearm(mc);
+	}
 	return handled ? IRQ_HANDLED : IRQ_NONE;
 }
 
@@ -216,7 +198,7 @@ nvkm_device_tegra_fini(struct nvkm_device *device, bool suspend)
 	if (tdev->irq) {
 		free_irq(tdev->irq, tdev);
 		tdev->irq = 0;
-	}
+	};
 }
 
 static int
@@ -273,13 +255,12 @@ nvkm_device_tegra_new(const struct nvkm_device_tegra_func *func,
 
 	tdev->func = func;
 	tdev->pdev = pdev;
+	tdev->irq = -1;
 
-	if (func->require_vdd) {
-		tdev->vdd = devm_regulator_get(&pdev->dev, "vdd");
-		if (IS_ERR(tdev->vdd)) {
-			ret = PTR_ERR(tdev->vdd);
-			goto free;
-		}
+	tdev->vdd = devm_regulator_get(&pdev->dev, "vdd");
+	if (IS_ERR(tdev->vdd)) {
+		ret = PTR_ERR(tdev->vdd);
+		goto free;
 	}
 
 	tdev->rst = devm_reset_control_get(&pdev->dev, "gpu");
@@ -294,25 +275,11 @@ nvkm_device_tegra_new(const struct nvkm_device_tegra_func *func,
 		goto free;
 	}
 
-	if (func->require_ref_clk)
-		tdev->clk_ref = devm_clk_get(&pdev->dev, "ref");
-	if (IS_ERR(tdev->clk_ref)) {
-		ret = PTR_ERR(tdev->clk_ref);
-		goto free;
-	}
-
 	tdev->clk_pwr = devm_clk_get(&pdev->dev, "pwr");
 	if (IS_ERR(tdev->clk_pwr)) {
 		ret = PTR_ERR(tdev->clk_pwr);
 		goto free;
 	}
-
-	/**
-	 * The IOMMU bit defines the upper limit of the GPU-addressable space.
-	 */
-	ret = dma_set_mask(&pdev->dev, DMA_BIT_MASK(tdev->func->iommu_bit));
-	if (ret)
-		goto free;
 
 	nvkm_device_tegra_probe_iommu(tdev);
 
@@ -321,7 +288,6 @@ nvkm_device_tegra_new(const struct nvkm_device_tegra_func *func,
 		goto remove;
 
 	tdev->gpu_speedo = tegra_sku_info.gpu_speedo_value;
-	tdev->gpu_speedo_id = tegra_sku_info.gpu_speedo_id;
 	ret = nvkm_device_ctor(&nvkm_device_tegra_func, NULL, &pdev->dev,
 			       NVKM_DEVICE_TEGRA, pdev->id, NULL,
 			       cfg, dbg, detect, mmio, subdev_mask,

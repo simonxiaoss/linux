@@ -883,19 +883,17 @@ static int sn95031_codec_probe(struct snd_soc_codec *codec)
 	return 0;
 }
 
-static const struct snd_soc_codec_driver sn95031_codec = {
+static struct snd_soc_codec_driver sn95031_codec = {
 	.probe		= sn95031_codec_probe,
 	.set_bias_level	= sn95031_set_vaud_bias,
 	.idle_bias_off	= true,
 
-	.component_driver = {
-		.controls		= sn95031_snd_controls,
-		.num_controls		= ARRAY_SIZE(sn95031_snd_controls),
-		.dapm_widgets		= sn95031_dapm_widgets,
-		.num_dapm_widgets	= ARRAY_SIZE(sn95031_dapm_widgets),
-		.dapm_routes		= sn95031_audio_map,
-		.num_dapm_routes	= ARRAY_SIZE(sn95031_audio_map),
-	},
+	.controls	= sn95031_snd_controls,
+	.num_controls	= ARRAY_SIZE(sn95031_snd_controls),
+	.dapm_widgets	= sn95031_dapm_widgets,
+	.num_dapm_widgets	= ARRAY_SIZE(sn95031_dapm_widgets),
+	.dapm_routes	= sn95031_audio_map,
+	.num_dapm_routes	= ARRAY_SIZE(sn95031_audio_map),
 };
 
 static int sn95031_device_probe(struct platform_device *pdev)

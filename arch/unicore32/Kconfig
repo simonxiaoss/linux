@@ -1,11 +1,10 @@
-# SPDX-License-Identifier: GPL-2.0
 config UNICORE32
 	def_bool y
-	select ARCH_HAS_DEVMEM_IS_ALLOWED
 	select ARCH_MIGHT_HAVE_PC_PARPORT
 	select ARCH_MIGHT_HAVE_PC_SERIO
 	select HAVE_MEMBLOCK
 	select HAVE_GENERIC_DMA_COHERENT
+	select HAVE_DMA_ATTRS
 	select HAVE_KERNEL_GZIP
 	select HAVE_KERNEL_BZIP2
 	select GENERIC_ATOMIC64
@@ -32,6 +31,9 @@ config NO_IOPORT_MAP
 	bool
 
 config STACKTRACE_SUPPORT
+	def_bool y
+
+config HAVE_LATENCYTOP_SUPPORT
 	def_bool y
 
 config LOCKDEP_SUPPORT
@@ -81,7 +83,7 @@ config ARCH_PUV3
 	select CPU_UCV2
 	select GENERIC_CLOCKEVENTS
 	select HAVE_CLK
-	select GPIOLIB
+	select ARCH_REQUIRE_GPIOLIB
 
 # CONFIGs for ARCH_PUV3
 
@@ -115,7 +117,7 @@ endif
 
 source "arch/unicore32/mm/Kconfig"
 
-comment "Floating point support"
+comment "Floating poing support"
 
 config UNICORE_FPU_F64
 	def_bool y if !ARCH_FPGA

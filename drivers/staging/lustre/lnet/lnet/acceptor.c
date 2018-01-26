@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -16,7 +15,11 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.gnu.org/licenses/gpl-2.0.html
+ * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
+ *
+ * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
+ * CA 95054 USA or visit www.sun.com if you need additional information or
+ * have any questions.
  *
  * GPL HEADER END
  */
@@ -24,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2015, Intel Corporation.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -33,8 +36,7 @@
 
 #define DEBUG_SUBSYSTEM S_LNET
 #include <linux/completion.h>
-#include <net/sock.h>
-#include <linux/lnet/lib-lnet.h>
+#include "../../include/linux/lnet/lib-lnet.h"
 
 static int   accept_port    = 988;
 static int   accept_backlog = 127;
@@ -44,9 +46,7 @@ static struct {
 	int			pta_shutdown;
 	struct socket		*pta_sock;
 	struct completion	pta_signal;
-} lnet_acceptor_state = {
-	.pta_shutdown = 1
-};
+} lnet_acceptor_state;
 
 int
 lnet_acceptor_port(void)
@@ -78,11 +78,9 @@ static char *accept_type;
 static int
 lnet_acceptor_get_tunables(void)
 {
-	/*
-	 * Userland acceptor uses 'accept_type' instead of 'accept', due to
+	/* Userland acceptor uses 'accept_type' instead of 'accept', due to
 	 * conflict with 'accept(2)', but kernel acceptor still uses 'accept'
-	 * for compatibility. Hence the trick.
-	 */
+	 * for compatibility. Hence the trick. */
 	accept_type = accept;
 	return 0;
 }
@@ -142,15 +140,15 @@ EXPORT_SYMBOL(lnet_connect_console_error);
 
 int
 lnet_connect(struct socket **sockp, lnet_nid_t peer_nid,
-	     __u32 local_ip, __u32 peer_ip, int peer_port)
+	    __u32 local_ip, __u32 peer_ip, int peer_port)
 {
-	struct lnet_acceptor_connreq cr;
+	lnet_acceptor_connreq_t cr;
 	struct socket *sock;
 	int rc;
 	int port;
 	int fatal;
 
-	BUILD_BUG_ON(sizeof(cr) > 16);	    /* too big to be on the stack */
+	CLASSERT(sizeof(cr) <= 16);	    /* not too big to be on the stack */
 
 	for (port = LNET_ACCEPTOR_MAX_RESERVED_PORT;
 	     port >= LNET_ACCEPTOR_MIN_RESERVED_PORT;
@@ -159,26 +157,26 @@ lnet_connect(struct socket **sockp, lnet_nid_t peer_nid,
 
 		rc = lnet_sock_connect(&sock, &fatal, local_ip, port, peer_ip,
 				       peer_port);
-		if (rc) {
+		if (rc != 0) {
 			if (fatal)
 				goto failed;
 			continue;
 		}
 
-		BUILD_BUG_ON(LNET_PROTO_ACCEPTOR_VERSION != 1);
+		CLASSERT(LNET_PROTO_ACCEPTOR_VERSION == 1);
 
 		cr.acr_magic   = LNET_PROTO_ACCEPTOR_MAGIC;
 		cr.acr_version = LNET_PROTO_ACCEPTOR_VERSION;
 		cr.acr_nid     = peer_nid;
 
-		if (the_lnet.ln_testprotocompat) {
+		if (the_lnet.ln_testprotocompat != 0) {
 			/* single-shot proto check */
 			lnet_net_lock(LNET_LOCK_EX);
-			if (the_lnet.ln_testprotocompat & 4) {
+			if ((the_lnet.ln_testprotocompat & 4) != 0) {
 				cr.acr_version++;
 				the_lnet.ln_testprotocompat &= ~4;
 			}
-			if (the_lnet.ln_testprotocompat & 8) {
+			if ((the_lnet.ln_testprotocompat & 8) != 0) {
 				cr.acr_magic = LNET_PROTO_MAGIC;
 				the_lnet.ln_testprotocompat &= ~8;
 			}
@@ -186,7 +184,7 @@ lnet_connect(struct socket **sockp, lnet_nid_t peer_nid,
 		}
 
 		rc = lnet_sock_write(sock, &cr, sizeof(cr), accept_timeout);
-		if (rc)
+		if (rc != 0)
 			goto failed_sock;
 
 		*sockp = sock;
@@ -204,37 +202,39 @@ lnet_connect(struct socket **sockp, lnet_nid_t peer_nid,
 }
 EXPORT_SYMBOL(lnet_connect);
 
+/* Below is the code common for both kernel and MT user-space */
+
 static int
 lnet_accept(struct socket *sock, __u32 magic)
 {
-	struct lnet_acceptor_connreq cr;
+	lnet_acceptor_connreq_t cr;
 	__u32 peer_ip;
 	int peer_port;
 	int rc;
 	int flip;
-	struct lnet_ni *ni;
+	lnet_ni_t *ni;
 	char *str;
 
 	LASSERT(sizeof(cr) <= 16);	     /* not too big for the stack */
 
 	rc = lnet_sock_getaddr(sock, 1, &peer_ip, &peer_port);
-	LASSERT(!rc);		      /* we succeeded before */
+	LASSERT(rc == 0);		      /* we succeeded before */
 
 	if (!lnet_accept_magic(magic, LNET_PROTO_ACCEPTOR_MAGIC)) {
+
 		if (lnet_accept_magic(magic, LNET_PROTO_MAGIC)) {
-			/*
-			 * future version compatibility!
+			/* future version compatibility!
 			 * When LNET unifies protocols over all LNDs, the first
-			 * thing sent will be a version query. I send back
-			 * LNET_PROTO_ACCEPTOR_MAGIC to tell her I'm "old"
-			 */
+			 * thing sent will be a version query.  I send back
+			 * LNET_PROTO_ACCEPTOR_MAGIC to tell her I'm "old" */
+
 			memset(&cr, 0, sizeof(cr));
 			cr.acr_magic = LNET_PROTO_ACCEPTOR_MAGIC;
 			cr.acr_version = LNET_PROTO_ACCEPTOR_VERSION;
 			rc = lnet_sock_write(sock, &cr, sizeof(cr),
 					     accept_timeout);
 
-			if (rc)
+			if (rc != 0)
 				CERROR("Error sending magic+version in response to LNET magic from %pI4h: %d\n",
 				       &peer_ip, rc);
 			return -EPROTO;
@@ -254,9 +254,9 @@ lnet_accept(struct socket *sock, __u32 magic)
 
 	rc = lnet_sock_read(sock, &cr.acr_version, sizeof(cr.acr_version),
 			    accept_timeout);
-	if (rc) {
+	if (rc != 0) {
 		CERROR("Error %d reading connection request version from %pI4h\n",
-		       rc, &peer_ip);
+			rc, &peer_ip);
 		return -EIO;
 	}
 
@@ -264,12 +264,10 @@ lnet_accept(struct socket *sock, __u32 magic)
 		__swab32s(&cr.acr_version);
 
 	if (cr.acr_version != LNET_PROTO_ACCEPTOR_VERSION) {
-		/*
-		 * future version compatibility!
+		/* future version compatibility!
 		 * An acceptor-specific protocol rev will first send a version
 		 * query.  I send back my current version to tell her I'm
-		 * "old".
-		 */
+		 * "old". */
 		int peer_version = cr.acr_version;
 
 		memset(&cr, 0, sizeof(cr));
@@ -277,7 +275,7 @@ lnet_accept(struct socket *sock, __u32 magic)
 		cr.acr_version = LNET_PROTO_ACCEPTOR_VERSION;
 
 		rc = lnet_sock_write(sock, &cr, sizeof(cr), accept_timeout);
-		if (rc)
+		if (rc != 0)
 			CERROR("Error sending magic+version in response to version %d from %pI4h: %d\n",
 			       peer_version, &peer_ip, rc);
 		return -EPROTO;
@@ -285,11 +283,11 @@ lnet_accept(struct socket *sock, __u32 magic)
 
 	rc = lnet_sock_read(sock, &cr.acr_nid,
 			    sizeof(cr) -
-			    offsetof(struct lnet_acceptor_connreq, acr_nid),
+			    offsetof(lnet_acceptor_connreq_t, acr_nid),
 			    accept_timeout);
-	if (rc) {
+	if (rc != 0) {
 		CERROR("Error %d reading connection request from %pI4h\n",
-		       rc, &peer_ip);
+			rc, &peer_ip);
 		return -EIO;
 	}
 
@@ -297,20 +295,20 @@ lnet_accept(struct socket *sock, __u32 magic)
 		__swab64s(&cr.acr_nid);
 
 	ni = lnet_net2ni(LNET_NIDNET(cr.acr_nid));
-	if (!ni ||	       /* no matching net */
+	if (ni == NULL ||	       /* no matching net */
 	    ni->ni_nid != cr.acr_nid) { /* right NET, wrong NID! */
-		if (ni)
+		if (ni != NULL)
 			lnet_ni_decref(ni);
 		LCONSOLE_ERROR_MSG(0x120, "Refusing connection from %pI4h for %s: No matching NI\n",
 				   &peer_ip, libcfs_nid2str(cr.acr_nid));
 		return -EPERM;
 	}
 
-	if (!ni->ni_lnd->lnd_accept) {
+	if (ni->ni_lnd->lnd_accept == NULL) {
 		/* This catches a request for the loopback LND */
 		lnet_ni_decref(ni);
 		LCONSOLE_ERROR_MSG(0x121, "Refusing connection from %pI4h for %s: NI doesn not accept IP connections\n",
-				   &peer_ip, libcfs_nid2str(cr.acr_nid));
+				  &peer_ip, libcfs_nid2str(cr.acr_nid));
 		return -EPERM;
 	}
 
@@ -331,15 +329,15 @@ lnet_acceptor(void *arg)
 	__u32 magic;
 	__u32 peer_ip;
 	int peer_port;
-	int secure = (int)((long)arg);
+	int secure = (int)((long_ptr_t)arg);
 
-	LASSERT(!lnet_acceptor_state.pta_sock);
+	LASSERT(lnet_acceptor_state.pta_sock == NULL);
 
 	cfs_block_allsigs();
 
 	rc = lnet_sock_listen(&lnet_acceptor_state.pta_sock, 0, accept_port,
 			      accept_backlog);
-	if (rc) {
+	if (rc != 0) {
 		if (rc == -EADDRINUSE)
 			LCONSOLE_ERROR_MSG(0x122, "Can't start acceptor on port %d: port already in use\n",
 					   accept_port);
@@ -356,12 +354,13 @@ lnet_acceptor(void *arg)
 	lnet_acceptor_state.pta_shutdown = rc;
 	complete(&lnet_acceptor_state.pta_signal);
 
-	if (rc)
+	if (rc != 0)
 		return rc;
 
 	while (!lnet_acceptor_state.pta_shutdown) {
+
 		rc = lnet_sock_accept(&newsock, lnet_acceptor_state.pta_sock);
-		if (rc) {
+		if (rc != 0) {
 			if (rc != -EAGAIN) {
 				CWARN("Accept error %d: pausing...\n", rc);
 				set_current_state(TASK_UNINTERRUPTIBLE);
@@ -377,7 +376,7 @@ lnet_acceptor(void *arg)
 		}
 
 		rc = lnet_sock_getaddr(newsock, 1, &peer_ip, &peer_port);
-		if (rc) {
+		if (rc != 0) {
 			CERROR("Can't determine new connection's address\n");
 			goto failed;
 		}
@@ -390,14 +389,14 @@ lnet_acceptor(void *arg)
 
 		rc = lnet_sock_read(newsock, &magic, sizeof(magic),
 				    accept_timeout);
-		if (rc) {
+		if (rc != 0) {
 			CERROR("Error %d reading connection request from %pI4h\n",
-			       rc, &peer_ip);
+				rc, &peer_ip);
 			goto failed;
 		}
 
 		rc = lnet_accept(newsock, magic);
-		if (rc)
+		if (rc != 0)
 			goto failed;
 
 		continue;
@@ -437,19 +436,14 @@ accept2secure(const char *acc, long *sec)
 int
 lnet_acceptor_start(void)
 {
-	struct task_struct *task;
 	int rc;
 	long rc2;
 	long secure;
 
-	/* if acceptor is already running return immediately */
-	if (!lnet_acceptor_state.pta_shutdown)
-		return 0;
-
-	LASSERT(!lnet_acceptor_state.pta_sock);
+	LASSERT(lnet_acceptor_state.pta_sock == NULL);
 
 	rc = lnet_acceptor_get_tunables();
-	if (rc)
+	if (rc != 0)
 		return rc;
 
 	init_completion(&lnet_acceptor_state.pta_signal);
@@ -457,13 +451,13 @@ lnet_acceptor_start(void)
 	if (rc <= 0)
 		return rc;
 
-	if (!lnet_count_acceptor_nis())  /* not required */
+	if (lnet_count_acceptor_nis() == 0)  /* not required */
 		return 0;
 
-	task = kthread_run(lnet_acceptor, (void *)(uintptr_t)secure,
-			   "acceptor_%03ld", secure);
-	if (IS_ERR(task)) {
-		rc2 = PTR_ERR(task);
+	rc2 = PTR_ERR(kthread_run(lnet_acceptor,
+				  (void *)(ulong_ptr_t)secure,
+				  "acceptor_%03ld", secure));
+	if (IS_ERR_VALUE(rc2)) {
 		CERROR("Can't start acceptor thread: %ld\n", rc2);
 
 		return -ESRCH;
@@ -474,11 +468,11 @@ lnet_acceptor_start(void)
 
 	if (!lnet_acceptor_state.pta_shutdown) {
 		/* started OK */
-		LASSERT(lnet_acceptor_state.pta_sock);
+		LASSERT(lnet_acceptor_state.pta_sock != NULL);
 		return 0;
 	}
 
-	LASSERT(!lnet_acceptor_state.pta_sock);
+	LASSERT(lnet_acceptor_state.pta_sock == NULL);
 
 	return -ENETDOWN;
 }
@@ -486,17 +480,11 @@ lnet_acceptor_start(void)
 void
 lnet_acceptor_stop(void)
 {
-	struct sock *sk;
-
-	if (lnet_acceptor_state.pta_shutdown) /* not running */
+	if (lnet_acceptor_state.pta_sock == NULL) /* not running */
 		return;
 
 	lnet_acceptor_state.pta_shutdown = 1;
-
-	sk = lnet_acceptor_state.pta_sock->sk;
-
-	/* awake any sleepers using safe method */
-	sk->sk_state_change(sk);
+	wake_up_all(sk_sleep(lnet_acceptor_state.pta_sock->sk));
 
 	/* block until acceptor signals exit */
 	wait_for_completion(&lnet_acceptor_state.pta_signal);

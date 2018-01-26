@@ -23,7 +23,6 @@
 #include <asm/cputype.h>
 #include <asm/setup.h>
 #include <asm/page.h>
-#include <asm/prom.h>
 #include <asm/smp_plat.h>
 #include <asm/mach/arch.h>
 #include <asm/mach-types.h>
@@ -95,7 +94,7 @@ void __init arm_dt_init_cpu_maps(void)
 		if (of_node_cmp(cpu->type, "cpu"))
 			continue;
 
-		pr_debug(" * %pOF...\n", cpu);
+		pr_debug(" * %s...\n", cpu->full_name);
 		/*
 		 * A device tree containing CPU nodes with missing "reg"
 		 * properties is considered invalid to build the
@@ -103,7 +102,8 @@ void __init arm_dt_init_cpu_maps(void)
 		 */
 		cell = of_get_property(cpu, "reg", &prop_bytes);
 		if (!cell || prop_bytes < sizeof(*cell)) {
-			pr_debug(" * %pOF missing reg property\n", cpu);
+			pr_debug(" * %s missing reg property\n",
+				     cpu->full_name);
 			of_node_put(cpu);
 			return;
 		}
@@ -219,10 +219,8 @@ const struct machine_desc * __init setup_machine_fdt(unsigned int dt_phys)
 {
 	const struct machine_desc *mdesc, *mdesc_best = NULL;
 
-#if defined(CONFIG_ARCH_MULTIPLATFORM) || defined(CONFIG_ARM_SINGLE_ARMV7M)
+#ifdef CONFIG_ARCH_MULTIPLATFORM
 	DT_MACHINE_START(GENERIC_DT, "Generic DT based system")
-		.l2c_aux_val = 0x0,
-		.l2c_aux_mask = ~0x0,
 	MACHINE_END
 
 	mdesc_best = &__mach_desc_GENERIC_DT;

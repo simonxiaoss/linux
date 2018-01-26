@@ -23,13 +23,11 @@ struct uio_map;
 /**
  * struct uio_mem - description of a UIO memory region
  * @name:		name of the memory region for identification
- * @addr:               address of the device's memory rounded to page
- * 			size (phys_addr is used since addr can be
- * 			logical, virtual, or physical & phys_addr_t
- * 			should always be large enough to handle any of
- * 			the address types)
- * @offs:               offset of device memory within the page
- * @size:		size of IO (multiple of page size)
+ * @addr:		address of the device's memory (phys_addr is used since
+ * 			addr can be logical, virtual, or physical & phys_addr_t
+ * 			should always be large enough to handle any of the
+ * 			address types)
+ * @size:		size of IO
  * @memtype:		type of memory addr points to
  * @internal_addr:	ioremap-ped version of addr, for driver internal use
  * @map:		for use by the UIO core only.
@@ -37,7 +35,6 @@ struct uio_map;
 struct uio_mem {
 	const char		*name;
 	phys_addr_t		addr;
-	unsigned long		offs;
 	resource_size_t		size;
 	int			memtype;
 	void __iomem		*internal_addr;

@@ -253,7 +253,6 @@ xfs_attr3_leaf_verify(
 {
 	struct xfs_mount	*mp = bp->b_target->bt_mount;
 	struct xfs_attr_leafblock *leaf = bp->b_addr;
-	struct xfs_perag *pag = bp->b_pag;
 	struct xfs_attr3_icleaf_hdr ichdr;
 
 	xfs_attr3_leaf_hdr_from_disk(mp->m_attr_geo, &ichdr, leaf);
@@ -274,12 +273,7 @@ xfs_attr3_leaf_verify(
 		if (ichdr.magic != XFS_ATTR_LEAF_MAGIC)
 			return false;
 	}
-	/*
-	 * In recovery there is a transient state where count == 0 is valid
-	 * because we may have transitioned an empty shortform attr to a leaf
-	 * if the attr didn't fit in shortform.
-	 */
-	if (pag && pag->pagf_init && ichdr.count == 0)
+	if (ichdr.count == 0)
 		return false;
 
 	/* XXX: need to range check rest of attr header values */
@@ -351,7 +345,7 @@ xfs_attr3_leaf_read(
 
 	err = xfs_da_read_buf(tp, dp, bno, mappedbno, bpp,
 				XFS_ATTR_FORK, &xfs_attr3_leaf_buf_ops);
-	if (!err && tp && *bpp)
+	if (!err && tp)
 		xfs_trans_buf_set_type(tp, *bpp, XFS_BLFT_ATTR_LEAF_BUF);
 	return err;
 }
@@ -397,8 +391,12 @@ xfs_attr_shortform_bytesfit(xfs_inode_t *dp, int bytes)
 	/* rounded down */
 	offset = (XFS_LITINO(mp, dp->i_d.di_version) - bytes) >> 3;
 
-	if (dp->i_d.di_format == XFS_DINODE_FMT_DEV) {
+	switch (dp->i_d.di_format) {
+	case XFS_DINODE_FMT_DEV:
 		minforkoff = roundup(sizeof(xfs_dev_t), 8) >> 3;
+		return (offset >= minforkoff) ? minforkoff : 0;
+	case XFS_DINODE_FMT_UUID:
+		minforkoff = roundup(sizeof(uuid_t), 8) >> 3;
 		return (offset >= minforkoff) ? minforkoff : 0;
 	}
 
@@ -735,13 +733,10 @@ xfs_attr_shortform_getvalue(xfs_da_args_t *args)
 }
 
 /*
- * Convert from using the shortform to the leaf.  On success, return the
- * buffer so that we can keep it locked until we're totally done with it.
+ * Convert from using the shortform to the leaf.
  */
 int
-xfs_attr_shortform_to_leaf(
-	struct xfs_da_args	*args,
-	struct xfs_buf		**leaf_bp)
+xfs_attr_shortform_to_leaf(xfs_da_args_t *args)
 {
 	xfs_inode_t *dp;
 	xfs_attr_shortform_t *sf;
@@ -797,7 +792,7 @@ xfs_attr_shortform_to_leaf(
 	nargs.dp = dp;
 	nargs.geo = args->geo;
 	nargs.firstblock = args->firstblock;
-	nargs.dfops = args->dfops;
+	nargs.flist = args->flist;
 	nargs.total = args->total;
 	nargs.whichfork = XFS_ATTR_FORK;
 	nargs.trans = args->trans;
@@ -821,7 +816,7 @@ xfs_attr_shortform_to_leaf(
 		sfe = XFS_ATTR_SF_NEXTENTRY(sfe);
 	}
 	error = 0;
-	*leaf_bp = bp;
+
 out:
 	kmem_free(tmpbuffer);
 	return error;
@@ -927,7 +922,7 @@ xfs_attr3_leaf_to_shortform(
 	nargs.geo = args->geo;
 	nargs.dp = dp;
 	nargs.firstblock = args->firstblock;
-	nargs.dfops = args->dfops;
+	nargs.flist = args->flist;
 	nargs.total = args->total;
 	nargs.whichfork = XFS_ATTR_FORK;
 	nargs.trans = args->trans;
@@ -2607,7 +2602,7 @@ xfs_attr3_leaf_clearflag(
 	/*
 	 * Commit the flag value change and start the next trans in series.
 	 */
-	return xfs_trans_roll_inode(&args->trans, args->dp);
+	return xfs_trans_roll(&args->trans, args->dp);
 }
 
 /*
@@ -2658,7 +2653,7 @@ xfs_attr3_leaf_setflag(
 	/*
 	 * Commit the flag value change and start the next trans in series.
 	 */
-	return xfs_trans_roll_inode(&args->trans, args->dp);
+	return xfs_trans_roll(&args->trans, args->dp);
 }
 
 /*
@@ -2776,7 +2771,7 @@ xfs_attr3_leaf_flipflags(
 	/*
 	 * Commit the flag value change and start the next trans in series.
 	 */
-	error = xfs_trans_roll_inode(&args->trans, args->dp);
+	error = xfs_trans_roll(&args->trans, args->dp);
 
 	return error;
 }

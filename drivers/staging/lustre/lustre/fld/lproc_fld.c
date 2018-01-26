@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -16,7 +15,11 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.gnu.org/licenses/gpl-2.0.html
+ * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
+ *
+ * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
+ * CA 95054 USA or visit www.sun.com if you need additional information or
+ * have any questions.
  *
  * GPL HEADER END
  */
@@ -24,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2015, Intel Corporation.
+ * Copyright (c) 2012, 2013, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,15 +43,15 @@
 
 #define DEBUG_SUBSYSTEM S_FLD
 
-#include <linux/libcfs/libcfs.h>
+#include "../../include/linux/libcfs/libcfs.h"
 #include <linux/module.h>
 
-#include <obd.h>
-#include <obd_class.h>
-#include <obd_support.h>
-#include <lustre_req_layout.h>
-#include <lustre_fld.h>
-#include <lustre_fid.h>
+#include "../include/obd.h"
+#include "../include/obd_class.h"
+#include "../include/obd_support.h"
+#include "../include/lustre_req_layout.h"
+#include "../include/lustre_fld.h"
+#include "../include/lustre_fid.h"
 #include "fld_internal.h"
 
 static int
@@ -57,8 +60,11 @@ fld_debugfs_targets_seq_show(struct seq_file *m, void *unused)
 	struct lu_client_fld *fld = (struct lu_client_fld *)m->private;
 	struct lu_fld_target *target;
 
+	LASSERT(fld != NULL);
+
 	spin_lock(&fld->lcf_lock);
-	list_for_each_entry(target, &fld->lcf_targets, ft_chain)
+	list_for_each_entry(target,
+				&fld->lcf_targets, ft_chain)
 		seq_printf(m, "%s\n", fld_target_name(target));
 	spin_unlock(&fld->lcf_lock);
 
@@ -69,6 +75,8 @@ static int
 fld_debugfs_hash_seq_show(struct seq_file *m, void *unused)
 {
 	struct lu_client_fld *fld = (struct lu_client_fld *)m->private;
+
+	LASSERT(fld != NULL);
 
 	spin_lock(&fld->lcf_lock);
 	seq_printf(m, "%s\n", fld->lcf_hash->fh_name);
@@ -94,8 +102,9 @@ fld_debugfs_hash_seq_write(struct file *file,
 		return -EFAULT;
 
 	fld = ((struct seq_file *)file->private_data)->private;
+	LASSERT(fld != NULL);
 
-	for (i = 0; fld_hash[i].fh_name; i++) {
+	for (i = 0; fld_hash[i].fh_name != NULL; i++) {
 		if (count != strlen(fld_hash[i].fh_name))
 			continue;
 
@@ -105,7 +114,7 @@ fld_debugfs_hash_seq_write(struct file *file,
 		}
 	}
 
-	if (hash) {
+	if (hash != NULL) {
 		spin_lock(&fld->lcf_lock);
 		fld->lcf_hash = hash;
 		spin_unlock(&fld->lcf_lock);
@@ -123,6 +132,8 @@ fld_debugfs_cache_flush_write(struct file *file, const char __user *buffer,
 {
 	struct lu_client_fld *fld = file->private_data;
 
+	LASSERT(fld != NULL);
+
 	fld_cache_flush(fld->lcf_cache);
 
 	CDEBUG(D_INFO, "%s: Lookup cache is flushed\n", fld->lcf_name);
@@ -137,7 +148,7 @@ fld_debugfs_cache_flush_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations fld_debugfs_cache_flush_fops = {
+static struct file_operations fld_debugfs_cache_flush_fops = {
 	.owner		= THIS_MODULE,
 	.open           = simple_open,
 	.write		= fld_debugfs_cache_flush_write,

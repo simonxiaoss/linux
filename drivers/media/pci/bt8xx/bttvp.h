@@ -41,8 +41,8 @@
 #include <media/videobuf-dma-sg.h>
 #include <media/tveeprom.h>
 #include <media/rc-core.h>
-#include <media/i2c/ir-kbd-i2c.h>
-#include <media/drv-intf/tea575x.h>
+#include <media/ir-kbd-i2c.h>
+#include <media/tea575x.h>
 
 #include "bt848.h"
 #include "bttv.h"
@@ -122,7 +122,6 @@ struct bttv_format {
 
 struct bttv_ir {
 	struct rc_dev           *dev;
-	struct bttv		*btv;
 	struct timer_list       timer;
 
 	char                    name[32];
@@ -233,7 +232,7 @@ struct bttv_fh {
 	const struct bttv_format *ovfmt;
 	struct bttv_overlay      ov;
 
-	/* Application called VIDIOC_S_SELECTION. */
+	/* Application called VIDIOC_S_CROP. */
 	int                      do_crop;
 
 	/* vbi capture */
@@ -282,7 +281,7 @@ int bttv_try_fmt_vbi_cap(struct file *file, void *fh, struct v4l2_format *f);
 int bttv_g_fmt_vbi_cap(struct file *file, void *fh, struct v4l2_format *f);
 int bttv_s_fmt_vbi_cap(struct file *file, void *fh, struct v4l2_format *f);
 
-extern const struct videobuf_queue_ops bttv_vbi_qops;
+extern struct videobuf_queue_ops bttv_vbi_qops;
 
 /* ---------------------------------------------------------- */
 /* bttv-gpio.c */

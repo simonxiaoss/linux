@@ -113,19 +113,12 @@ static void pmc_reprogram_counter(struct kvm_pmc *pmc, u32 type,
 		.config = config,
 	};
 
-	attr.sample_period = (-pmc->counter) & pmc_bitmask(pmc);
-
 	if (in_tx)
 		attr.config |= HSW_IN_TX;
-	if (in_tx_cp) {
-		/*
-		 * HSW_IN_TX_CHECKPOINTED is not supported with nonzero
-		 * period. Just clear the sample period so at least
-		 * allocating the counter doesn't fail.
-		 */
-		attr.sample_period = 0;
+	if (in_tx_cp)
 		attr.config |= HSW_IN_TX_CHECKPOINTED;
-	}
+
+	attr.sample_period = (-pmc->counter) & pmc_bitmask(pmc);
 
 	event = perf_event_create_kernel_counter(&attr, -1, current,
 						 intr ? kvm_perf_overflow_intr :
@@ -264,7 +257,7 @@ int kvm_pmu_rdpmc(struct kvm_vcpu *vcpu, unsigned idx, u64 *data)
 
 void kvm_pmu_deliver_pmi(struct kvm_vcpu *vcpu)
 {
-	if (lapic_in_kernel(vcpu))
+	if (vcpu->arch.apic)
 		kvm_apic_local_deliver(vcpu->arch.apic, APIC_LVTPC);
 }
 

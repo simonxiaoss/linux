@@ -26,7 +26,7 @@
 #include <linux/usb/otg.h>
 
 #include <mach/hardware.h>
-#include "regs-u2d.h"
+#include <mach/regs-u2d.h>
 #include <linux/platform_data/usb-pxa3xx-ulpi.h>
 
 struct pxa3xx_u2d_ulpi {
@@ -286,9 +286,11 @@ static int pxa3xx_u2d_probe(struct platform_device *pdev)
 	struct resource *r;
 	int err;
 
-	u2d = kzalloc(sizeof(*u2d), GFP_KERNEL);
-	if (!u2d)
+	u2d = kzalloc(sizeof(struct pxa3xx_u2d_ulpi), GFP_KERNEL);
+	if (!u2d) {
+		dev_err(&pdev->dev, "failed to allocate memory\n");
 		return -ENOMEM;
+	}
 
 	u2d->clk = clk_get(&pdev->dev, NULL);
 	if (IS_ERR(u2d->clk)) {

@@ -184,7 +184,6 @@ static int snvs_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	rtc_tm_to_time(alrm_tm, &time);
 
 	regmap_update_bits(data->regmap, data->offset + SNVS_LPCR, SNVS_LPCR_LPTA_EN, 0);
-	rtc_write_sync_lp(data);
 	regmap_write(data->regmap, data->offset + SNVS_LPTAR, time);
 
 	/* Clear alarm interrupt status bit */
@@ -258,7 +257,7 @@ static int snvs_rtc_probe(struct platform_device *pdev)
 		of_property_read_u32(pdev->dev.of_node, "offset", &data->offset);
 	}
 
-	if (IS_ERR(data->regmap)) {
+	if (!data->regmap) {
 		dev_err(&pdev->dev, "Can't find snvs syscon\n");
 		return -ENODEV;
 	}
@@ -323,7 +322,7 @@ static int snvs_rtc_suspend(struct device *dev)
 	struct snvs_rtc_data *data = dev_get_drvdata(dev);
 
 	if (device_may_wakeup(dev))
-		return enable_irq_wake(data->irq);
+		enable_irq_wake(data->irq);
 
 	return 0;
 }

@@ -281,8 +281,8 @@ error:
 
 static const struct file_operations romfs_dir_operations = {
 	.read		= generic_read_dir,
-	.iterate_shared	= romfs_readdir,
-	.llseek		= generic_file_llseek,
+	.iterate	= romfs_readdir,
+	.llseek		= default_llseek,
 };
 
 static const struct inode_operations romfs_dir_inode_operations = {
@@ -361,7 +361,6 @@ static struct inode *romfs_iget(struct super_block *sb, unsigned long pos)
 		break;
 	case ROMFH_SYM:
 		i->i_op = &page_symlink_inode_operations;
-		inode_nohighmem(i);
 		i->i_data.a_ops = &romfs_aops;
 		mode |= S_IRWXUGO;
 		break;
@@ -451,7 +450,7 @@ static int romfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 static int romfs_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
-	*flags |= SB_RDONLY;
+	*flags |= MS_RDONLY;
 	return 0;
 }
 
@@ -502,7 +501,7 @@ static int romfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	sb->s_maxbytes = 0xFFFFFFFF;
 	sb->s_magic = ROMFS_MAGIC;
-	sb->s_flags |= SB_RDONLY | SB_NOATIME;
+	sb->s_flags |= MS_RDONLY | MS_NOATIME;
 	sb->s_op = &romfs_super_ops;
 
 #ifdef CONFIG_ROMFS_ON_MTD
@@ -640,8 +639,8 @@ static int __init init_romfs_fs(void)
 	romfs_inode_cachep =
 		kmem_cache_create("romfs_i",
 				  sizeof(struct romfs_inode_info), 0,
-				  SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD |
-				  SLAB_ACCOUNT, romfs_i_init_once);
+				  SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+				  romfs_i_init_once);
 
 	if (!romfs_inode_cachep) {
 		pr_err("Failed to initialise inode cache\n");

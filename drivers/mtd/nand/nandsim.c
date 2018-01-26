@@ -33,14 +33,13 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mtd/mtd.h>
-#include <linux/mtd/rawnand.h>
+#include <linux/mtd/nand.h>
 #include <linux/mtd/nand_bch.h>
 #include <linux/mtd/partitions.h>
 #include <linux/delay.h>
 #include <linux/list.h>
 #include <linux/random.h>
 #include <linux/sched.h>
-#include <linux/sched/mm.h>
 #include <linux/fs.h>
 #include <linux/pagemap.h>
 #include <linux/seq_file.h>
@@ -287,6 +286,11 @@ MODULE_PARM_DESC(bch,		 "Enable BCH ecc and set how many bits should "
 /* Maximum page cache pages needed to read or write a NAND page to the cache_file */
 #define NS_MAX_HELD_PAGES 16
 
+struct nandsim_debug_info {
+	struct dentry *dfs_root;
+	struct dentry *dfs_wear_report;
+};
+
 /*
  * A union to represent flash memory contents and flash buffer.
  */
@@ -365,6 +369,8 @@ struct nandsim {
 	void *file_buf;
 	struct page *held_pages[NS_MAX_HELD_PAGES];
 	int held_cnt;
+
+	struct nandsim_debug_info dbg;
 };
 
 /*
@@ -517,28 +523,44 @@ static const struct file_operations dfs_fops = {
  */
 static int nandsim_debugfs_create(struct nandsim *dev)
 {
-	struct dentry *root = nsmtd->dbg.dfs_dir;
+	struct nandsim_debug_info *dbg = &dev->dbg;
 	struct dentry *dent;
+	int err;
 
-	/*
-	 * Just skip debugfs initialization when the debugfs directory is
-	 * missing.
-	 */
-	if (IS_ERR_OR_NULL(root)) {
-		if (IS_ENABLED(CONFIG_DEBUG_FS) &&
-		    !IS_ENABLED(CONFIG_MTD_PARTITIONED_MASTER))
-			NS_WARN("CONFIG_MTD_PARTITIONED_MASTER must be enabled to expose debugfs stuff\n");
+	if (!IS_ENABLED(CONFIG_DEBUG_FS))
 		return 0;
-	}
 
-	dent = debugfs_create_file("nandsim_wear_report", S_IRUSR,
-				   root, dev, &dfs_fops);
+	dent = debugfs_create_dir("nandsim", NULL);
 	if (IS_ERR_OR_NULL(dent)) {
-		NS_ERR("cannot create \"nandsim_wear_report\" debugfs entry\n");
-		return -1;
+		int err = dent ? -ENODEV : PTR_ERR(dent);
+
+		NS_ERR("cannot create \"nandsim\" debugfs directory, err %d\n",
+			err);
+		return err;
 	}
+	dbg->dfs_root = dent;
+
+	dent = debugfs_create_file("wear_report", S_IRUSR,
+				   dbg->dfs_root, dev, &dfs_fops);
+	if (IS_ERR_OR_NULL(dent))
+		goto out_remove;
+	dbg->dfs_wear_report = dent;
 
 	return 0;
+
+out_remove:
+	debugfs_remove_recursive(dbg->dfs_root);
+	err = dent ? PTR_ERR(dent) : -ENODEV;
+	return err;
+}
+
+/**
+ * nandsim_debugfs_remove - destroy all debugfs files
+ */
+static void nandsim_debugfs_remove(struct nandsim *ns)
+{
+	if (IS_ENABLED(CONFIG_DEBUG_FS))
+		debugfs_remove_recursive(ns->dbg.dfs_root);
 }
 
 /*
@@ -547,7 +569,7 @@ static int nandsim_debugfs_create(struct nandsim *dev)
  *
  * RETURNS: 0 if success, -ENOMEM if memory alloc fails.
  */
-static int __init alloc_device(struct nandsim *ns)
+static int alloc_device(struct nandsim *ns)
 {
 	struct file *cfile;
 	int i, err;
@@ -632,7 +654,7 @@ static void free_device(struct nandsim *ns)
 	}
 }
 
-static char __init *get_partition_name(int i)
+static char *get_partition_name(int i)
 {
 	return kasprintf(GFP_KERNEL, "NAND simulator partition %d", i);
 }
@@ -642,10 +664,10 @@ static char __init *get_partition_name(int i)
  *
  * RETURNS: 0 if success, -ERRNO if failure.
  */
-static int __init init_nandsim(struct mtd_info *mtd)
+static int init_nandsim(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
-	struct nandsim   *ns   = nand_get_controller_data(chip);
+	struct nand_chip *chip = mtd->priv;
+	struct nandsim   *ns   = chip->priv;
 	int i, ret = 0;
 	uint64_t remains;
 	uint64_t next_offset;
@@ -884,7 +906,7 @@ static int parse_weakpages(void)
 		zero_ok = (*w == '0' ? 1 : 0);
 		page_no = simple_strtoul(w, &w, 0);
 		if (!zero_ok && !page_no) {
-			NS_ERR("invalid weakpages.\n");
+			NS_ERR("invalid weakpagess.\n");
 			return -EINVAL;
 		}
 		max_writes = 3;
@@ -1317,7 +1339,7 @@ static void put_pages(struct nandsim *ns)
 	int i;
 
 	for (i = 0; i < ns->held_cnt; i++)
-		put_page(ns->held_pages[i]);
+		page_cache_release(ns->held_pages[i]);
 }
 
 /* Get page cache pages in advance to provide NOFS memory allocation */
@@ -1327,8 +1349,8 @@ static int get_pages(struct nandsim *ns, struct file *file, size_t count, loff_t
 	struct page *page;
 	struct address_space *mapping = file->f_mapping;
 
-	start_index = pos >> PAGE_SHIFT;
-	end_index = (pos + count - 1) >> PAGE_SHIFT;
+	start_index = pos >> PAGE_CACHE_SHIFT;
+	end_index = (pos + count - 1) >> PAGE_CACHE_SHIFT;
 	if (end_index - start_index + 1 > NS_MAX_HELD_PAGES)
 		return -EINVAL;
 	ns->held_cnt = 0;
@@ -1351,18 +1373,31 @@ static int get_pages(struct nandsim *ns, struct file *file, size_t count, loff_t
 	return 0;
 }
 
+static int set_memalloc(void)
+{
+	if (current->flags & PF_MEMALLOC)
+		return 0;
+	current->flags |= PF_MEMALLOC;
+	return 1;
+}
+
+static void clear_memalloc(int memalloc)
+{
+	if (memalloc)
+		current->flags &= ~PF_MEMALLOC;
+}
+
 static ssize_t read_file(struct nandsim *ns, struct file *file, void *buf, size_t count, loff_t pos)
 {
 	ssize_t tx;
-	int err;
-	unsigned int noreclaim_flag;
+	int err, memalloc;
 
 	err = get_pages(ns, file, count, pos);
 	if (err)
 		return err;
-	noreclaim_flag = memalloc_noreclaim_save();
-	tx = kernel_read(file, buf, count, &pos);
-	memalloc_noreclaim_restore(noreclaim_flag);
+	memalloc = set_memalloc();
+	tx = kernel_read(file, pos, buf, count);
+	clear_memalloc(memalloc);
 	put_pages(ns);
 	return tx;
 }
@@ -1370,15 +1405,14 @@ static ssize_t read_file(struct nandsim *ns, struct file *file, void *buf, size_
 static ssize_t write_file(struct nandsim *ns, struct file *file, void *buf, size_t count, loff_t pos)
 {
 	ssize_t tx;
-	int err;
-	unsigned int noreclaim_flag;
+	int err, memalloc;
 
 	err = get_pages(ns, file, count, pos);
 	if (err)
 		return err;
-	noreclaim_flag = memalloc_noreclaim_save();
-	tx = kernel_write(file, buf, count, &pos);
-	memalloc_noreclaim_restore(noreclaim_flag);
+	memalloc = set_memalloc();
+	tx = kernel_write(file, buf, count, pos);
+	clear_memalloc(memalloc);
 	put_pages(ns);
 	return tx;
 }
@@ -1874,8 +1908,7 @@ static void switch_state(struct nandsim *ns)
 
 static u_char ns_nand_read_byte(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
-	struct nandsim *ns = nand_get_controller_data(chip);
+	struct nandsim *ns = ((struct nand_chip *)mtd->priv)->priv;
 	u_char outb = 0x00;
 
 	/* Sanity and correctness checks */
@@ -1936,8 +1969,7 @@ static u_char ns_nand_read_byte(struct mtd_info *mtd)
 
 static void ns_nand_write_byte(struct mtd_info *mtd, u_char byte)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
-	struct nandsim *ns = nand_get_controller_data(chip);
+	struct nandsim *ns = ((struct nand_chip *)mtd->priv)->priv;
 
 	/* Sanity and correctness checks */
 	if (!ns->lines.ce) {
@@ -2091,8 +2123,7 @@ static void ns_nand_write_byte(struct mtd_info *mtd, u_char byte)
 
 static void ns_hwcontrol(struct mtd_info *mtd, int cmd, unsigned int bitmask)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
-	struct nandsim *ns = nand_get_controller_data(chip);
+	struct nandsim *ns = ((struct nand_chip *)mtd->priv)->priv;
 
 	ns->lines.cle = bitmask & NAND_CLE ? 1 : 0;
 	ns->lines.ale = bitmask & NAND_ALE ? 1 : 0;
@@ -2110,7 +2141,7 @@ static int ns_device_ready(struct mtd_info *mtd)
 
 static uint16_t ns_nand_read_word(struct mtd_info *mtd)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct nand_chip *chip = (struct nand_chip *)mtd->priv;
 
 	NS_DBG("read_word\n");
 
@@ -2119,8 +2150,7 @@ static uint16_t ns_nand_read_word(struct mtd_info *mtd)
 
 static void ns_nand_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
-	struct nandsim *ns = nand_get_controller_data(chip);
+	struct nandsim *ns = ((struct nand_chip *)mtd->priv)->priv;
 
 	/* Check that chip is expecting data input */
 	if (!(ns->state & STATE_DATAIN_MASK)) {
@@ -2147,8 +2177,7 @@ static void ns_nand_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 
 static void ns_nand_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
-	struct nandsim *ns = nand_get_controller_data(chip);
+	struct nandsim *ns = ((struct nand_chip *)mtd->priv)->priv;
 
 	/* Sanity and correctness checks */
 	if (!ns->lines.ce) {
@@ -2169,7 +2198,7 @@ static void ns_nand_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 		int i;
 
 		for (i = 0; i < len; i++)
-			buf[i] = mtd_to_nand(mtd)->read_byte(mtd);
+			buf[i] = ((struct nand_chip *)mtd->priv)->read_byte(mtd);
 
 		return;
 	}
@@ -2207,15 +2236,16 @@ static int __init ns_init_module(void)
 	}
 
 	/* Allocate and initialize mtd_info, nand_chip and nandsim structures */
-	chip = kzalloc(sizeof(struct nand_chip) + sizeof(struct nandsim),
-		       GFP_KERNEL);
-	if (!chip) {
+	nsmtd = kzalloc(sizeof(struct mtd_info) + sizeof(struct nand_chip)
+				+ sizeof(struct nandsim), GFP_KERNEL);
+	if (!nsmtd) {
 		NS_ERR("unable to allocate core structures.\n");
 		return -ENOMEM;
 	}
-	nsmtd       = nand_to_mtd(chip);
+	chip        = (struct nand_chip *)(nsmtd + 1);
+        nsmtd->priv = (void *)chip;
 	nand        = (struct nandsim *)(chip + 1);
-	nand_set_controller_data(chip, (void *)nand);
+	chip->priv  = (void *)nand;
 
 	/*
 	 * Register simulator's callbacks.
@@ -2227,7 +2257,6 @@ static int __init ns_init_module(void)
 	chip->read_buf   = ns_nand_read_buf;
 	chip->read_word  = ns_nand_read_word;
 	chip->ecc.mode   = NAND_ECC_SOFT;
-	chip->ecc.algo   = NAND_ECC_HAMMING;
 	/* The NAND_SKIP_BBTSCAN option is necessary for 'overridesize' */
 	/* and 'badblocks' parameters to work */
 	chip->options   |= NAND_SKIP_BBTSCAN;
@@ -2279,6 +2308,8 @@ static int __init ns_init_module(void)
 	retval = nand_scan_ident(nsmtd, 1, NULL);
 	if (retval) {
 		NS_ERR("cannot scan NAND Simulator device\n");
+		if (retval > 0)
+			retval = -ENXIO;
 		goto error;
 	}
 
@@ -2303,8 +2334,7 @@ static int __init ns_init_module(void)
 			retval = -EINVAL;
 			goto error;
 		}
-		chip->ecc.mode = NAND_ECC_SOFT;
-		chip->ecc.algo = NAND_ECC_BCH;
+		chip->ecc.mode = NAND_ECC_SOFT_BCH;
 		chip->ecc.size = 512;
 		chip->ecc.strength = bch;
 		chip->ecc.bytes = eccbytes;
@@ -2314,6 +2344,8 @@ static int __init ns_init_module(void)
 	retval = nand_scan_tail(nsmtd);
 	if (retval) {
 		NS_ERR("can't register NAND Simulator\n");
+		if (retval > 0)
+			retval = -ENXIO;
 		goto error;
 	}
 
@@ -2334,6 +2366,9 @@ static int __init ns_init_module(void)
 	if ((retval = setup_wear_reporting(nsmtd)) != 0)
 		goto err_exit;
 
+	if ((retval = nandsim_debugfs_create(nand)) != 0)
+		goto err_exit;
+
 	if ((retval = init_nandsim(nsmtd)) != 0)
 		goto err_exit;
 
@@ -2349,9 +2384,6 @@ static int __init ns_init_module(void)
 	if (retval != 0)
 		goto err_exit;
 
-	if ((retval = nandsim_debugfs_create(nand)) != 0)
-		goto err_exit;
-
         return 0;
 
 err_exit:
@@ -2360,7 +2392,7 @@ err_exit:
 	for (i = 0;i < ARRAY_SIZE(nand->partitions); ++i)
 		kfree(nand->partitions[i].name);
 error:
-	kfree(chip);
+	kfree(nsmtd);
 	free_lists();
 
 	return retval;
@@ -2373,15 +2405,15 @@ module_init(ns_init_module);
  */
 static void __exit ns_cleanup_module(void)
 {
-	struct nand_chip *chip = mtd_to_nand(nsmtd);
-	struct nandsim *ns = nand_get_controller_data(chip);
+	struct nandsim *ns = ((struct nand_chip *)nsmtd->priv)->priv;
 	int i;
 
+	nandsim_debugfs_remove(ns);
 	free_nandsim(ns);    /* Free nandsim private resources */
 	nand_release(nsmtd); /* Unregister driver */
 	for (i = 0;i < ARRAY_SIZE(ns->partitions); ++i)
 		kfree(ns->partitions[i].name);
-	kfree(mtd_to_nand(nsmtd));        /* Free other structures */
+	kfree(nsmtd);        /* Free other structures */
 	free_lists();
 }
 

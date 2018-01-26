@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  *  Copyright (C) 2005,2006,2007,2008,2009,2010 Imagination Technologies
  *
@@ -13,7 +12,6 @@
 #include <linux/percpu.h>
 #include <linux/memblock.h>
 #include <linux/initrd.h>
-#include <linux/sched/task.h>
 
 #include <asm/setup.h>
 #include <asm/page.h>
@@ -392,6 +390,7 @@ void __init mem_init(void)
 
 	free_all_bootmem();
 	mem_init_print_info(NULL);
+	show_mem(0);
 }
 
 void free_initmem(void)

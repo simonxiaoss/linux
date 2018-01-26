@@ -30,6 +30,10 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/module.h>
@@ -381,7 +385,7 @@ MODULE_PARM_DESC(jpeg_enable, "Jpeg enable(1-on 0-off) default 1");
 
 /* USB device table */
 #define USB_SENSORAY_VID	0x1943
-static const struct usb_device_id s2255_table[] = {
+static struct usb_device_id s2255_table[] = {
 	{USB_DEVICE(USB_SENSORAY_VID, 0x2255)},
 	{USB_DEVICE(USB_SENSORAY_VID, 0x2257)}, /*same family as 2255*/
 	{ }			/* Terminating entry */
@@ -485,10 +489,9 @@ static void s2255_reset_dsppower(struct s2255_dev *dev)
 
 /* kickstarts the firmware loading. from probe
  */
-static void s2255_timer(struct timer_list *t)
+static void s2255_timer(unsigned long user_data)
 {
-	struct s2255_dev *dev = from_timer(dev, t, timer);
-	struct s2255_fw *data = dev->fw_data;
+	struct s2255_fw *data = (struct s2255_fw *)user_data;
 	if (usb_submit_urb(data->fw_urb, GFP_ATOMIC) < 0) {
 		pr_err("s2255: can't submit urb\n");
 		atomic_set(&data->fw_state, S2255_FW_FAILED);
@@ -571,7 +574,7 @@ static void s2255_got_frame(struct s2255_vc *vc, int jpgsize)
 	buf = list_entry(vc->buf_list.next,
 			 struct s2255_buffer, list);
 	list_del(&buf->list);
-	buf->vb.vb2_buf.timestamp = ktime_get_ns();
+	v4l2_get_timestamp(&buf->vb.timestamp);
 	buf->vb.field = vc->field;
 	buf->vb.sequence = vc->frame_count;
 	spin_unlock_irqrestore(&vc->qlock, flags);
@@ -657,9 +660,9 @@ static void s2255_fillbuff(struct s2255_vc *vc,
    Videobuf operations
    ------------------------------------------------------------------*/
 
-static int queue_setup(struct vb2_queue *vq,
+static int queue_setup(struct vb2_queue *vq, const void *parg,
 		       unsigned int *nbuffers, unsigned int *nplanes,
-		       unsigned int sizes[], struct device *alloc_devs[])
+		       unsigned int sizes[], void *alloc_ctxs[])
 {
 	struct s2255_vc *vc = vb2_get_drv_priv(vq);
 	if (*nbuffers < S2255_MIN_BUFS)
@@ -714,7 +717,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 static int start_streaming(struct vb2_queue *vq, unsigned int count);
 static void stop_streaming(struct vb2_queue *vq);
 
-static const struct vb2_ops s2255_video_qops = {
+static struct vb2_ops s2255_video_qops = {
 	.queue_setup = queue_setup,
 	.buf_prepare = buffer_prepare,
 	.buf_queue = buffer_queue,
@@ -1591,7 +1594,7 @@ static void s2255_video_device_release(struct video_device *vdev)
 	return;
 }
 
-static const struct video_device template = {
+static struct video_device template = {
 	.name = "s2255v",
 	.fops = &s2255_fops_v4l,
 	.ioctl_ops = &s2255_ioctl_ops,
@@ -1804,8 +1807,6 @@ static int save_frame(struct s2255_dev *dev, struct s2255_pipeinfo *pipe_info)
 				default:
 					pr_info("s2255 unknown resp\n");
 				}
-				pdata++;
-				break;
 			default:
 				pdata++;
 				break;
@@ -1900,30 +1901,19 @@ static long s2255_vendor_req(struct s2255_dev *dev, unsigned char Request,
 			     s32 TransferBufferLength, int bOut)
 {
 	int r;
-	unsigned char *buf;
-
-	buf = kmalloc(TransferBufferLength, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
-
 	if (!bOut) {
 		r = usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
 				    Request,
 				    USB_TYPE_VENDOR | USB_RECIP_DEVICE |
 				    USB_DIR_IN,
-				    Value, Index, buf,
+				    Value, Index, TransferBuffer,
 				    TransferBufferLength, HZ * 5);
-
-		if (r >= 0)
-			memcpy(TransferBuffer, buf, TransferBufferLength);
 	} else {
-		memcpy(buf, TransferBuffer, TransferBufferLength);
 		r = usb_control_msg(dev->udev, usb_sndctrlpipe(dev->udev, 0),
 				    Request, USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-				    Value, Index, buf,
+				    Value, Index, TransferBuffer,
 				    TransferBufferLength, HZ * 5);
 	}
-	kfree(buf);
 	return r;
 }
 
@@ -2123,8 +2113,11 @@ static int s2255_start_readpipe(struct s2255_dev *dev)
 	pipe_info->state = 1;
 	pipe_info->err_count = 0;
 	pipe_info->stream_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!pipe_info->stream_urb)
+	if (!pipe_info->stream_urb) {
+		dev_err(&dev->udev->dev,
+			"ReadStream: Unable to alloc URB\n");
 		return -ENOMEM;
+	}
 	/* transfer buffer allocated in board_init */
 	usb_fill_bulk_urb(pipe_info->stream_urb, dev->udev,
 			  pipe,
@@ -2284,7 +2277,7 @@ static int s2255_probe(struct usb_interface *interface,
 		dev_err(&interface->dev, "Could not find bulk-in endpoint\n");
 		goto errorEP;
 	}
-	timer_setup(&dev->timer, s2255_timer, 0);
+	setup_timer(&dev->timer, s2255_timer, (unsigned long)dev->fw_data);
 	init_waitqueue_head(&dev->fw_data->wait_fw);
 	for (i = 0; i < MAX_CHANNELS; i++) {
 		struct s2255_vc *vc = &dev->vc[i];
@@ -2297,8 +2290,10 @@ static int s2255_probe(struct usb_interface *interface,
 	}
 
 	dev->fw_data->fw_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!dev->fw_data->fw_urb)
+	if (!dev->fw_data->fw_urb) {
+		dev_err(&interface->dev, "out of memory!\n");
 		goto errorFWURB;
+	}
 
 	dev->fw_data->pfw_data = kzalloc(CHUNK_SIZE, GFP_KERNEL);
 	if (!dev->fw_data->pfw_data) {

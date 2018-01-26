@@ -23,9 +23,6 @@ int pinctrl_bind_pins(struct device *dev)
 {
 	int ret;
 
-	if (dev->of_node_reused)
-		return 0;
-
 	dev->pins = devm_kzalloc(dev, sizeof(*(dev->pins)), GFP_KERNEL);
 	if (!dev->pins)
 		return -ENOMEM;
@@ -94,13 +91,9 @@ cleanup_alloc:
 	devm_kfree(dev, dev->pins);
 	dev->pins = NULL;
 
-	/* Return deferrals */
-	if (ret == -EPROBE_DEFER)
-		return ret;
-	/* Return serious errors */
-	if (ret == -EINVAL)
-		return ret;
-	/* We ignore errors like -ENOENT meaning no pinctrl state */
+	/* Only return deferrals */
+	if (ret != -EPROBE_DEFER)
+		ret = 0;
 
-	return 0;
+	return ret;
 }

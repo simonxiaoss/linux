@@ -486,7 +486,7 @@ static int tz1090_pdc_pinctrl_dt_node_to_map(struct pinctrl_dev *pctldev,
 	return 0;
 }
 
-static const struct pinctrl_ops tz1090_pdc_pinctrl_ops = {
+static struct pinctrl_ops tz1090_pdc_pinctrl_ops = {
 	.get_groups_count	= tz1090_pdc_pinctrl_get_groups_count,
 	.get_group_name		= tz1090_pdc_pinctrl_get_group_name,
 	.get_group_pins		= tz1090_pdc_pinctrl_get_group_pins,
@@ -631,7 +631,7 @@ static void tz1090_pdc_pinctrl_gpio_disable_free(
 	}
 }
 
-static const struct pinmux_ops tz1090_pdc_pinmux_ops = {
+static struct pinmux_ops tz1090_pdc_pinmux_ops = {
 	.get_functions_count	= tz1090_pdc_pinctrl_get_funcs_count,
 	.get_function_name	= tz1090_pdc_pinctrl_get_func_name,
 	.get_function_groups	= tz1090_pdc_pinctrl_get_func_groups,
@@ -905,7 +905,7 @@ next_config:
 	return 0;
 }
 
-static const struct pinconf_ops tz1090_pdc_pinconf_ops = {
+static struct pinconf_ops tz1090_pdc_pinconf_ops = {
 	.is_generic			= true,
 	.pin_config_get			= tz1090_pdc_pinconf_get,
 	.pin_config_set			= tz1090_pdc_pinconf_set,
@@ -947,8 +947,7 @@ static int tz1090_pdc_pinctrl_probe(struct platform_device *pdev)
 	if (IS_ERR(pmx->regs))
 		return PTR_ERR(pmx->regs);
 
-	pmx->pctl = devm_pinctrl_register(&pdev->dev, &tz1090_pdc_pinctrl_desc,
-					  pmx);
+	pmx->pctl = pinctrl_register(&tz1090_pdc_pinctrl_desc, &pdev->dev, pmx);
 	if (IS_ERR(pmx->pctl)) {
 		dev_err(&pdev->dev, "Couldn't register pinctrl driver\n");
 		return PTR_ERR(pmx->pctl);
@@ -957,6 +956,15 @@ static int tz1090_pdc_pinctrl_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, pmx);
 
 	dev_info(&pdev->dev, "TZ1090 PDC pinctrl driver initialised\n");
+
+	return 0;
+}
+
+static int tz1090_pdc_pinctrl_remove(struct platform_device *pdev)
+{
+	struct tz1090_pdc_pmx *pmx = platform_get_drvdata(pdev);
+
+	pinctrl_unregister(pmx->pctl);
 
 	return 0;
 }
@@ -972,6 +980,7 @@ static struct platform_driver tz1090_pdc_pinctrl_driver = {
 		.of_match_table	= tz1090_pdc_pinctrl_of_match,
 	},
 	.probe	= tz1090_pdc_pinctrl_probe,
+	.remove	= tz1090_pdc_pinctrl_remove,
 };
 
 static int __init tz1090_pdc_pinctrl_init(void)

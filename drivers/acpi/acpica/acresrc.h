@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2017, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -124,7 +124,7 @@ typedef enum {
 typedef const struct acpi_rsdump_info {
 	u8 opcode;
 	u8 offset;
-	const char *name;
+	char *name;
 	const char **pointer;
 
 } acpi_rsdump_info;
@@ -148,10 +148,7 @@ typedef enum {
 	ACPI_RSD_UINT16,
 	ACPI_RSD_UINT32,
 	ACPI_RSD_UINT64,
-	ACPI_RSD_WORDLIST,
-	ACPI_RSD_LABEL,
-	ACPI_RSD_SOURCE_LABEL,
-
+	ACPI_RSD_WORDLIST
 } ACPI_RSDUMP_OPCODES;
 
 /* restore default alignment */
@@ -212,7 +209,7 @@ acpi_rs_get_prs_method_data(struct acpi_namespace_node *node,
 
 acpi_status
 acpi_rs_get_method_data(acpi_handle handle,
-			const char *path, struct acpi_buffer *ret_buffer);
+			char *path, struct acpi_buffer *ret_buffer);
 
 acpi_status
 acpi_rs_set_srs_method_data(struct acpi_namespace_node *node,
@@ -226,16 +223,16 @@ acpi_rs_get_aei_method_data(struct acpi_namespace_node *node,
  * rscalc
  */
 acpi_status
-acpi_rs_get_list_length(u8 *aml_buffer,
-			u32 aml_buffer_length, acpi_size *size_needed);
+acpi_rs_get_list_length(u8 * aml_buffer,
+			u32 aml_buffer_length, acpi_size * size_needed);
 
 acpi_status
 acpi_rs_get_aml_length(struct acpi_resource *resource_list,
-		       acpi_size resource_list_size, acpi_size *size_needed);
+		       acpi_size resource_list_size, acpi_size * size_needed);
 
 acpi_status
 acpi_rs_get_pci_routing_table_length(union acpi_operand_object *package_object,
-				     acpi_size *buffer_size_needed);
+				     acpi_size * buffer_size_needed);
 
 acpi_status
 acpi_rs_convert_aml_to_resources(u8 * aml,
@@ -332,11 +329,6 @@ extern struct acpi_rsconvert_info acpi_rs_convert_fixed_dma[];
 extern struct acpi_rsconvert_info acpi_rs_convert_i2c_serial_bus[];
 extern struct acpi_rsconvert_info acpi_rs_convert_spi_serial_bus[];
 extern struct acpi_rsconvert_info acpi_rs_convert_uart_serial_bus[];
-extern struct acpi_rsconvert_info acpi_rs_convert_pin_function[];
-extern struct acpi_rsconvert_info acpi_rs_convert_pin_config[];
-extern struct acpi_rsconvert_info acpi_rs_convert_pin_group[];
-extern struct acpi_rsconvert_info acpi_rs_convert_pin_group_function[];
-extern struct acpi_rsconvert_info acpi_rs_convert_pin_group_config[];
 
 /* These resources require separate get/set tables */
 
@@ -380,17 +372,12 @@ extern struct acpi_rsdump_info acpi_rs_dump_ext_address64[];
 extern struct acpi_rsdump_info acpi_rs_dump_ext_irq[];
 extern struct acpi_rsdump_info acpi_rs_dump_generic_reg[];
 extern struct acpi_rsdump_info acpi_rs_dump_gpio[];
-extern struct acpi_rsdump_info acpi_rs_dump_pin_function[];
 extern struct acpi_rsdump_info acpi_rs_dump_fixed_dma[];
 extern struct acpi_rsdump_info acpi_rs_dump_common_serial_bus[];
 extern struct acpi_rsdump_info acpi_rs_dump_i2c_serial_bus[];
 extern struct acpi_rsdump_info acpi_rs_dump_spi_serial_bus[];
 extern struct acpi_rsdump_info acpi_rs_dump_uart_serial_bus[];
 extern struct acpi_rsdump_info acpi_rs_dump_general_flags[];
-extern struct acpi_rsdump_info acpi_rs_dump_pin_config[];
-extern struct acpi_rsdump_info acpi_rs_dump_pin_group[];
-extern struct acpi_rsdump_info acpi_rs_dump_pin_group_function[];
-extern struct acpi_rsdump_info acpi_rs_dump_pin_group_config[];
 #endif
 
 #endif				/* __ACRESRC_H__ */

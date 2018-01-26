@@ -1,6 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2003-2008 Takahiro Hirofuchi
+ *
+ * This is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307,
+ * USA.
  */
 
 #include <linux/kthread.h>
@@ -33,17 +47,16 @@ static void setup_cmd_submit_pdu(struct usbip_header *pdup,  struct urb *urb)
 static struct vhci_priv *dequeue_from_priv_tx(struct vhci_device *vdev)
 {
 	struct vhci_priv *priv, *tmp;
-	unsigned long flags;
 
-	spin_lock_irqsave(&vdev->priv_lock, flags);
+	spin_lock(&vdev->priv_lock);
 
 	list_for_each_entry_safe(priv, tmp, &vdev->priv_tx, list) {
 		list_move_tail(&priv->list, &vdev->priv_rx);
-		spin_unlock_irqrestore(&vdev->priv_lock, flags);
+		spin_unlock(&vdev->priv_lock);
 		return priv;
 	}
 
-	spin_unlock_irqrestore(&vdev->priv_lock, flags);
+	spin_unlock(&vdev->priv_lock);
 
 	return NULL;
 }
@@ -124,17 +137,16 @@ static int vhci_send_cmd_submit(struct vhci_device *vdev)
 static struct vhci_unlink *dequeue_from_unlink_tx(struct vhci_device *vdev)
 {
 	struct vhci_unlink *unlink, *tmp;
-	unsigned long flags;
 
-	spin_lock_irqsave(&vdev->priv_lock, flags);
+	spin_lock(&vdev->priv_lock);
 
 	list_for_each_entry_safe(unlink, tmp, &vdev->unlink_tx, list) {
 		list_move_tail(&unlink->list, &vdev->unlink_rx);
-		spin_unlock_irqrestore(&vdev->priv_lock, flags);
+		spin_unlock(&vdev->priv_lock);
 		return unlink;
 	}
 
-	spin_unlock_irqrestore(&vdev->priv_lock, flags);
+	spin_unlock(&vdev->priv_lock);
 
 	return NULL;
 }

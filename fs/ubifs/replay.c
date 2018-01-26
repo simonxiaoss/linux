@@ -61,7 +61,7 @@ struct replay_entry {
 	struct list_head list;
 	union ubifs_key key;
 	union {
-		struct fscrypt_name nm;
+		struct qstr nm;
 		struct {
 			loff_t old_size;
 			loff_t new_size;
@@ -267,7 +267,7 @@ static int apply_replay_entry(struct ubifs_info *c, struct replay_entry *r)
  * replay_entries_cmp - compare 2 replay entries.
  * @priv: UBIFS file-system description object
  * @a: first replay entry
- * @b: second replay entry
+ * @a: second replay entry
  *
  * This is a comparios function for 'list_sort()' which compares 2 replay
  * entries @a and @b by comparing their sequence numer.  Returns %1 if @a has
@@ -327,7 +327,7 @@ static void destroy_replay_list(struct ubifs_info *c)
 
 	list_for_each_entry_safe(r, tmp, &c->replay_list, list) {
 		if (is_hash_key(c, &r->key))
-			kfree(fname_name(&r->nm));
+			kfree(r->nm.name);
 		list_del(&r->list);
 		kfree(r);
 	}
@@ -430,10 +430,10 @@ static int insert_dent(struct ubifs_info *c, int lnum, int offs, int len,
 	r->deletion = !!deletion;
 	r->sqnum = sqnum;
 	key_copy(c, key, &r->key);
-	fname_len(&r->nm) = nlen;
+	r->nm.len = nlen;
 	memcpy(nbuf, name, nlen);
 	nbuf[nlen] = '\0';
-	fname_name(&r->nm) = nbuf;
+	r->nm.name = nbuf;
 
 	list_add_tail(&r->list, &c->replay_list);
 	return 0;
@@ -456,7 +456,7 @@ int ubifs_validate_entry(struct ubifs_info *c,
 	if (le32_to_cpu(dent->ch.len) != nlen + UBIFS_DENT_NODE_SZ + 1 ||
 	    dent->type >= UBIFS_ITYPES_CNT ||
 	    nlen > UBIFS_MAX_NLEN || dent->name[nlen] != 0 ||
-	    (key_type == UBIFS_XENT_KEY && strnlen(dent->name, nlen) != nlen) ||
+	    strnlen(dent->name, nlen) != nlen ||
 	    le64_to_cpu(dent->inum) > MAX_INUM) {
 		ubifs_err(c, "bad %s node", key_type == UBIFS_DENT_KEY ?
 			  "directory entry" : "extended attribute entry");

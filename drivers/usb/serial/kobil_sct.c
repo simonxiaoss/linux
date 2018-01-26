@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  *  KOBIL USB Smart Card Terminal Driver
  *
@@ -10,6 +9,11 @@
  *  This program is largely derived from work by the linux-usb group
  *  and associated source files.  Please see the usb/serial files for
  *  individual credits and copyrights.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
  *
  *  Thanks to Greg Kroah-Hartman (greg@kroah.com) for his help and
  *  patience.
@@ -47,6 +51,7 @@
 
 
 /* Function prototypes */
+static int kobil_attach(struct usb_serial *serial);
 static int kobil_port_probe(struct usb_serial_port *probe);
 static int kobil_port_remove(struct usb_serial_port *probe);
 static int  kobil_open(struct tty_struct *tty, struct usb_serial_port *port);
@@ -82,7 +87,7 @@ static struct usb_serial_driver kobil_device = {
 	.description =		"KOBIL USB smart card terminal",
 	.id_table =		id_table,
 	.num_ports =		1,
-	.num_interrupt_out =	1,
+	.attach =		kobil_attach,
 	.port_probe =		kobil_port_probe,
 	.port_remove =		kobil_port_remove,
 	.ioctl =		kobil_ioctl,
@@ -109,6 +114,16 @@ struct kobil_private {
 	__u16 device_type;
 };
 
+
+static int kobil_attach(struct usb_serial *serial)
+{
+	if (serial->num_interrupt_out < serial->num_ports) {
+		dev_err(&serial->interface->dev, "missing interrupt-out endpoint\n");
+		return -ENODEV;
+	}
+
+	return 0;
+}
 
 static int kobil_port_probe(struct usb_serial_port *port)
 {
@@ -487,7 +502,6 @@ static void kobil_set_termios(struct tty_struct *tty,
 		break;
 	default:
 		speed = 9600;
-		/* fall through */
 	case 9600:
 		urb_val = SUSBCR_SBR_9600;
 		break;

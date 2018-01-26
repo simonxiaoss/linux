@@ -17,7 +17,7 @@
 #include <linux/in.h>
 #include <linux/slab.h>
 #include <linux/kernel.h>
-#include <linux/sched/signal.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/string.h>
 #include <linux/sockios.h>
@@ -241,9 +241,9 @@ void nr_destroy_socket(struct sock *);
 /*
  *	Handler for deferred kills.
  */
-static void nr_destroy_timer(struct timer_list *t)
+static void nr_destroy_timer(unsigned long data)
 {
-	struct sock *sk = from_timer(sk, t, sk_timer);
+	struct sock *sk=(struct sock *)data;
 	bh_lock_sock(sk);
 	sock_hold(sk);
 	nr_destroy_socket(sk);
@@ -765,8 +765,7 @@ out_release:
 	return err;
 }
 
-static int nr_accept(struct socket *sock, struct socket *newsock, int flags,
-		     bool kern)
+static int nr_accept(struct socket *sock, struct socket *newsock, int flags)
 {
 	struct sk_buff *skb;
 	struct sock *newsk;

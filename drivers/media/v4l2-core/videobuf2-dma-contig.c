@@ -12,7 +12,6 @@
 
 #include <linux/dma-buf.h>
 #include <linux/module.h>
-#include <linux/refcount.h>
 #include <linux/scatterlist.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
@@ -22,20 +21,22 @@
 #include <media/videobuf2-dma-contig.h>
 #include <media/videobuf2-memops.h>
 
+struct vb2_dc_conf {
+	struct device		*dev;
+};
+
 struct vb2_dc_buf {
 	struct device			*dev;
 	void				*vaddr;
 	unsigned long			size;
-	void				*cookie;
 	dma_addr_t			dma_addr;
-	unsigned long			attrs;
 	enum dma_data_direction		dma_dir;
 	struct sg_table			*dma_sgt;
 	struct frame_vector		*vec;
 
 	/* MMAP related */
 	struct vb2_vmarea_handler	handler;
-	refcount_t			refcount;
+	atomic_t			refcount;
 	struct sg_table			*sgt_base;
 
 	/* DMABUF related */
@@ -87,7 +88,7 @@ static unsigned int vb2_dc_num_users(void *buf_priv)
 {
 	struct vb2_dc_buf *buf = buf_priv;
 
-	return refcount_read(&buf->refcount);
+	return atomic_read(&buf->refcount);
 }
 
 static void vb2_dc_prepare(void *buf_priv)
@@ -123,44 +124,36 @@ static void vb2_dc_put(void *buf_priv)
 {
 	struct vb2_dc_buf *buf = buf_priv;
 
-	if (!refcount_dec_and_test(&buf->refcount))
+	if (!atomic_dec_and_test(&buf->refcount))
 		return;
 
 	if (buf->sgt_base) {
 		sg_free_table(buf->sgt_base);
 		kfree(buf->sgt_base);
 	}
-	dma_free_attrs(buf->dev, buf->size, buf->cookie, buf->dma_addr,
-		       buf->attrs);
+	dma_free_coherent(buf->dev, buf->size, buf->vaddr, buf->dma_addr);
 	put_device(buf->dev);
 	kfree(buf);
 }
 
-static void *vb2_dc_alloc(struct device *dev, unsigned long attrs,
-			  unsigned long size, enum dma_data_direction dma_dir,
-			  gfp_t gfp_flags)
+static void *vb2_dc_alloc(void *alloc_ctx, unsigned long size,
+			  enum dma_data_direction dma_dir, gfp_t gfp_flags)
 {
+	struct vb2_dc_conf *conf = alloc_ctx;
+	struct device *dev = conf->dev;
 	struct vb2_dc_buf *buf;
-
-	if (WARN_ON(!dev))
-		return ERR_PTR(-EINVAL);
 
 	buf = kzalloc(sizeof *buf, GFP_KERNEL);
 	if (!buf)
 		return ERR_PTR(-ENOMEM);
 
-	if (attrs)
-		buf->attrs = attrs;
-	buf->cookie = dma_alloc_attrs(dev, size, &buf->dma_addr,
-					GFP_KERNEL | gfp_flags, buf->attrs);
-	if (!buf->cookie) {
+	buf->vaddr = dma_alloc_coherent(dev, size, &buf->dma_addr,
+						GFP_KERNEL | gfp_flags);
+	if (!buf->vaddr) {
 		dev_err(dev, "dma_alloc_coherent of size %ld failed\n", size);
 		kfree(buf);
 		return ERR_PTR(-ENOMEM);
 	}
-
-	if ((buf->attrs & DMA_ATTR_NO_KERNEL_MAPPING) == 0)
-		buf->vaddr = buf->cookie;
 
 	/* Prevent the device from being released while the buffer is used */
 	buf->dev = get_device(dev);
@@ -171,7 +164,7 @@ static void *vb2_dc_alloc(struct device *dev, unsigned long attrs,
 	buf->handler.put = vb2_dc_put;
 	buf->handler.arg = buf;
 
-	refcount_set(&buf->refcount, 1);
+	atomic_inc(&buf->refcount);
 
 	return buf;
 }
@@ -192,8 +185,8 @@ static int vb2_dc_mmap(void *buf_priv, struct vm_area_struct *vma)
 	 */
 	vma->vm_pgoff = 0;
 
-	ret = dma_mmap_attrs(buf->dev, vma, buf->cookie,
-		buf->dma_addr, buf->size, buf->attrs);
+	ret = dma_mmap_coherent(buf->dev, vma, buf->vaddr,
+		buf->dma_addr, buf->size);
 
 	if (ret) {
 		pr_err("Remapping memory failed, error: %d\n", ret);
@@ -336,7 +329,7 @@ static void *vb2_dc_dmabuf_ops_kmap(struct dma_buf *dbuf, unsigned long pgnum)
 {
 	struct vb2_dc_buf *buf = dbuf->priv;
 
-	return buf->vaddr ? buf->vaddr + pgnum * PAGE_SIZE : NULL;
+	return buf->vaddr + pgnum * PAGE_SIZE;
 }
 
 static void *vb2_dc_dmabuf_ops_vmap(struct dma_buf *dbuf)
@@ -352,13 +345,13 @@ static int vb2_dc_dmabuf_ops_mmap(struct dma_buf *dbuf,
 	return vb2_dc_mmap(dbuf->priv, vma);
 }
 
-static const struct dma_buf_ops vb2_dc_dmabuf_ops = {
+static struct dma_buf_ops vb2_dc_dmabuf_ops = {
 	.attach = vb2_dc_dmabuf_ops_attach,
 	.detach = vb2_dc_dmabuf_ops_detach,
 	.map_dma_buf = vb2_dc_dmabuf_ops_map,
 	.unmap_dma_buf = vb2_dc_dmabuf_ops_unmap,
-	.map = vb2_dc_dmabuf_ops_kmap,
-	.map_atomic = vb2_dc_dmabuf_ops_kmap,
+	.kmap = vb2_dc_dmabuf_ops_kmap,
+	.kmap_atomic = vb2_dc_dmabuf_ops_kmap,
 	.vmap = vb2_dc_dmabuf_ops_vmap,
 	.mmap = vb2_dc_dmabuf_ops_mmap,
 	.release = vb2_dc_dmabuf_ops_release,
@@ -375,8 +368,8 @@ static struct sg_table *vb2_dc_get_base_sgt(struct vb2_dc_buf *buf)
 		return NULL;
 	}
 
-	ret = dma_get_sgtable_attrs(buf->dev, sgt, buf->cookie, buf->dma_addr,
-		buf->size, buf->attrs);
+	ret = dma_get_sgtable(buf->dev, sgt, buf->vaddr, buf->dma_addr,
+		buf->size);
 	if (ret < 0) {
 		dev_err(buf->dev, "failed to get scatterlist from DMA API\n");
 		kfree(sgt);
@@ -408,7 +401,7 @@ static struct dma_buf *vb2_dc_get_dmabuf(void *buf_priv, unsigned long flags)
 		return NULL;
 
 	/* dmabuf keeps reference to vb2 buffer */
-	refcount_inc(&buf->refcount);
+	atomic_inc(&buf->refcount);
 
 	return dbuf;
 }
@@ -425,12 +418,15 @@ static void vb2_dc_put_userptr(void *buf_priv)
 	struct page **pages;
 
 	if (sgt) {
+		DEFINE_DMA_ATTRS(attrs);
+
+		dma_set_attr(DMA_ATTR_SKIP_CPU_SYNC, &attrs);
 		/*
 		 * No need to sync to CPU, it's already synced to the CPU
 		 * since the finish() memop will have been called before this.
 		 */
 		dma_unmap_sg_attrs(buf->dev, sgt->sgl, sgt->orig_nents,
-				   buf->dma_dir, DMA_ATTR_SKIP_CPU_SYNC);
+				   buf->dma_dir, &attrs);
 		pages = frame_vector_pages(buf->vec);
 		/* sgt should exist only if vector contains pages... */
 		BUG_ON(IS_ERR(pages));
@@ -474,17 +470,21 @@ static inline dma_addr_t vb2_dc_pfn_to_dma(struct device *dev, unsigned long pfn
 }
 #endif
 
-static void *vb2_dc_get_userptr(struct device *dev, unsigned long vaddr,
+static void *vb2_dc_get_userptr(void *alloc_ctx, unsigned long vaddr,
 	unsigned long size, enum dma_data_direction dma_dir)
 {
+	struct vb2_dc_conf *conf = alloc_ctx;
 	struct vb2_dc_buf *buf;
 	struct frame_vector *vec;
-	unsigned int offset;
+	unsigned long offset;
 	int n_pages, i;
 	int ret = 0;
 	struct sg_table *sgt;
 	unsigned long contig_size;
 	unsigned long dma_align = dma_get_cache_alignment();
+	DEFINE_DMA_ATTRS(attrs);
+
+	dma_set_attr(DMA_ATTR_SKIP_CPU_SYNC, &attrs);
 
 	/* Only cache aligned DMA transfers are reliable */
 	if (!IS_ALIGNED(vaddr | size, dma_align)) {
@@ -497,19 +497,15 @@ static void *vb2_dc_get_userptr(struct device *dev, unsigned long vaddr,
 		return ERR_PTR(-EINVAL);
 	}
 
-	if (WARN_ON(!dev))
-		return ERR_PTR(-EINVAL);
-
 	buf = kzalloc(sizeof *buf, GFP_KERNEL);
 	if (!buf)
 		return ERR_PTR(-ENOMEM);
 
-	buf->dev = dev;
+	buf->dev = conf->dev;
 	buf->dma_dir = dma_dir;
 
-	offset = lower_32_bits(offset_in_page(vaddr));
-	vec = vb2_create_framevec(vaddr, size, dma_dir == DMA_FROM_DEVICE ||
-					       dma_dir == DMA_BIDIRECTIONAL);
+	offset = vaddr & ~PAGE_MASK;
+	vec = vb2_create_framevec(vaddr, size, dma_dir == DMA_FROM_DEVICE);
 	if (IS_ERR(vec)) {
 		ret = PTR_ERR(vec);
 		goto fail_buf;
@@ -550,7 +546,7 @@ static void *vb2_dc_get_userptr(struct device *dev, unsigned long vaddr,
 	 * prepare() memop is called.
 	 */
 	sgt->nents = dma_map_sg_attrs(buf->dev, sgt->sgl, sgt->orig_nents,
-				      buf->dma_dir, DMA_ATTR_SKIP_CPU_SYNC);
+				      buf->dma_dir, &attrs);
 	if (sgt->nents <= 0) {
 		pr_err("failed to map scatterlist\n");
 		ret = -EIO;
@@ -574,7 +570,7 @@ out:
 
 fail_map_sg:
 	dma_unmap_sg_attrs(buf->dev, sgt->sgl, sgt->orig_nents,
-			   buf->dma_dir, DMA_ATTR_SKIP_CPU_SYNC);
+			   buf->dma_dir, &attrs);
 
 fail_sgt_init:
 	sg_free_table(sgt);
@@ -672,23 +668,21 @@ static void vb2_dc_detach_dmabuf(void *mem_priv)
 	kfree(buf);
 }
 
-static void *vb2_dc_attach_dmabuf(struct device *dev, struct dma_buf *dbuf,
+static void *vb2_dc_attach_dmabuf(void *alloc_ctx, struct dma_buf *dbuf,
 	unsigned long size, enum dma_data_direction dma_dir)
 {
+	struct vb2_dc_conf *conf = alloc_ctx;
 	struct vb2_dc_buf *buf;
 	struct dma_buf_attachment *dba;
 
 	if (dbuf->size < size)
 		return ERR_PTR(-EFAULT);
 
-	if (WARN_ON(!dev))
-		return ERR_PTR(-EINVAL);
-
 	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
 	if (!buf)
 		return ERR_PTR(-ENOMEM);
 
-	buf->dev = dev;
+	buf->dev = conf->dev;
 	/* create attachment for the dmabuf with the user device */
 	dba = dma_buf_attach(dbuf, buf->dev);
 	if (IS_ERR(dba)) {
@@ -727,58 +721,26 @@ const struct vb2_mem_ops vb2_dma_contig_memops = {
 };
 EXPORT_SYMBOL_GPL(vb2_dma_contig_memops);
 
-/**
- * vb2_dma_contig_set_max_seg_size() - configure DMA max segment size
- * @dev:	device for configuring DMA parameters
- * @size:	size of DMA max segment size to set
- *
- * To allow mapping the scatter-list into a single chunk in the DMA
- * address space, the device is required to have the DMA max segment
- * size parameter set to a value larger than the buffer size. Otherwise,
- * the DMA-mapping subsystem will split the mapping into max segment
- * size chunks. This function sets the DMA max segment size
- * parameter to let DMA-mapping map a buffer as a single chunk in DMA
- * address space.
- * This code assumes that the DMA-mapping subsystem will merge all
- * scatterlist segments if this is really possible (for example when
- * an IOMMU is available and enabled).
- * Ideally, this parameter should be set by the generic bus code, but it
- * is left with the default 64KiB value due to historical litmiations in
- * other subsystems (like limited USB host drivers) and there no good
- * place to set it to the proper value.
- * This function should be called from the drivers, which are known to
- * operate on platforms with IOMMU and provide access to shared buffers
- * (either USERPTR or DMABUF). This should be done before initializing
- * videobuf2 queue.
- */
-int vb2_dma_contig_set_max_seg_size(struct device *dev, unsigned int size)
+void *vb2_dma_contig_init_ctx(struct device *dev)
 {
-	if (!dev->dma_parms) {
-		dev->dma_parms = kzalloc(sizeof(*dev->dma_parms), GFP_KERNEL);
-		if (!dev->dma_parms)
-			return -ENOMEM;
-	}
-	if (dma_get_max_seg_size(dev) < size)
-		return dma_set_max_seg_size(dev, size);
+	struct vb2_dc_conf *conf;
 
-	return 0;
+	conf = kzalloc(sizeof *conf, GFP_KERNEL);
+	if (!conf)
+		return ERR_PTR(-ENOMEM);
+
+	conf->dev = dev;
+
+	return conf;
 }
-EXPORT_SYMBOL_GPL(vb2_dma_contig_set_max_seg_size);
+EXPORT_SYMBOL_GPL(vb2_dma_contig_init_ctx);
 
-/*
- * vb2_dma_contig_clear_max_seg_size() - release resources for DMA parameters
- * @dev:	device for configuring DMA parameters
- *
- * This function releases resources allocated to configure DMA parameters
- * (see vb2_dma_contig_set_max_seg_size() function). It should be called from
- * device drivers on driver remove.
- */
-void vb2_dma_contig_clear_max_seg_size(struct device *dev)
+void vb2_dma_contig_cleanup_ctx(void *alloc_ctx)
 {
-	kfree(dev->dma_parms);
-	dev->dma_parms = NULL;
+	if (!IS_ERR_OR_NULL(alloc_ctx))
+		kfree(alloc_ctx);
 }
-EXPORT_SYMBOL_GPL(vb2_dma_contig_clear_max_seg_size);
+EXPORT_SYMBOL_GPL(vb2_dma_contig_cleanup_ctx);
 
 MODULE_DESCRIPTION("DMA-contig memory handling routines for videobuf2");
 MODULE_AUTHOR("Pawel Osciak <pawel@osciak.com>");

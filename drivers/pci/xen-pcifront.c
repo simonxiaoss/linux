@@ -1038,8 +1038,10 @@ static int pcifront_detach_devices(struct pcifront_device *pdev)
 			err = -ENOMEM;
 			goto out;
 		}
-		state = xenbus_read_unsigned(pdev->xdev->otherend, str,
-					     XenbusStateUnknown);
+		err = xenbus_scanf(XBT_NIL, pdev->xdev->otherend, str, "%d",
+				   &state);
+		if (err != 1)
+			state = XenbusStateUnknown;
 
 		if (state != XenbusStateClosing)
 			continue;
@@ -1084,7 +1086,7 @@ out:
 	return err;
 }
 
-static void __ref pcifront_backend_changed(struct xenbus_device *xdev,
+static void __init_refok pcifront_backend_changed(struct xenbus_device *xdev,
 						  enum xenbus_state be_state)
 {
 	struct pcifront_device *pdev = dev_get_drvdata(&xdev->dev);

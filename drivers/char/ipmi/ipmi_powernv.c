@@ -23,6 +23,7 @@
 
 struct ipmi_smi_powernv {
 	u64			interface_id;
+	struct ipmi_device_id	ipmi_id;
 	ipmi_smi_t		intf;
 	unsigned int		irq;
 
@@ -195,7 +196,7 @@ static void ipmi_powernv_poll(void *send_info)
 	ipmi_powernv_recv(smi);
 }
 
-static const struct ipmi_smi_handlers ipmi_powernv_smi_handlers = {
+static struct ipmi_smi_handlers ipmi_powernv_smi_handlers = {
 	.owner			= THIS_MODULE,
 	.start_processing	= ipmi_powernv_start_processing,
 	.sender			= ipmi_powernv_send,
@@ -265,7 +266,8 @@ static int ipmi_powernv_probe(struct platform_device *pdev)
 	}
 
 	/* todo: query actual ipmi_device_id */
-	rc = ipmi_register_smi(&ipmi_powernv_smi_handlers, ipmi, dev, 0);
+	rc = ipmi_register_smi(&ipmi_powernv_smi_handlers, ipmi,
+			&ipmi->ipmi_id, dev, 0);
 	if (rc) {
 		dev_warn(dev, "IPMI SMI registration failed (%d)\n", rc);
 		goto err_free_msg;

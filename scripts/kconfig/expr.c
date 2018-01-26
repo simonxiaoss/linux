@@ -893,10 +893,7 @@ static enum string_value_kind expr_parse_string(const char *str,
 	switch (type) {
 	case S_BOOLEAN:
 	case S_TRISTATE:
-		val->s = !strcmp(str, "n") ? 0 :
-			 !strcmp(str, "m") ? 1 :
-			 !strcmp(str, "y") ? 2 : -1;
-		return k_signed;
+		return k_string;
 	case S_INT:
 		val->s = strtoll(str, &tail, 10);
 		kind = k_signed;

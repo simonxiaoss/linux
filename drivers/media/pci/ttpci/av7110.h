@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _AV7110_H_
 #define _AV7110_H_
 
@@ -33,7 +32,7 @@
 #include "stv0297.h"
 #include "l64781.h"
 
-#include <media/drv-intf/saa7146_vv.h>
+#include <media/saa7146_vv.h>
 
 
 #define ANALOG_TUNER_VES1820 1
@@ -41,11 +40,8 @@
 
 extern int av7110_debug;
 
-#define dprintk(level, fmt, arg...) do {				\
-	if (level & av7110_debug)					\
-		printk(KERN_DEBUG KBUILD_MODNAME ": %s(): " fmt,	\
-		       __func__, ##arg);				\
-} while (0)
+#define dprintk(level,args...) \
+	    do { if ((av7110_debug & level)) { printk("dvb-ttpci: %s(): ", __func__); printk(args); } } while (0)
 
 #define MAXFILT 32
 
@@ -94,7 +90,7 @@ struct infrared {
 	u8			inversion;
 	u16			last_key;
 	u16			last_toggle;
-	bool			keypressed;
+	u8			delay_timer_finished;
 };
 
 
@@ -178,7 +174,7 @@ struct av7110 {
 
 	/* CA */
 
-	struct ca_slot_info	ci_slot[2];
+	ca_slot_info_t		ci_slot[2];
 
 	enum av7110_video_mode	vidmode;
 	struct dmxdev		dmxdev;

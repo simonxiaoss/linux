@@ -48,7 +48,9 @@ static void ttm_eu_del_from_lru_locked(struct list_head *list)
 
 	list_for_each_entry(entry, list, head) {
 		struct ttm_buffer_object *bo = entry->bo;
-		ttm_bo_del_from_lru(bo);
+		unsigned put_count = ttm_bo_del_from_lru(bo);
+
+		ttm_bo_list_ref_sub(bo, put_count, true);
 	}
 }
 
@@ -110,7 +112,8 @@ int ttm_eu_reserve_buffers(struct ww_acquire_ctx *ticket,
 	list_for_each_entry(entry, list, head) {
 		struct ttm_buffer_object *bo = entry->bo;
 
-		ret = __ttm_bo_reserve(bo, intr, (ticket == NULL), ticket);
+		ret = __ttm_bo_reserve(bo, intr, (ticket == NULL), true,
+				       ticket);
 		if (!ret && unlikely(atomic_read(&bo->cpu_writers) > 0)) {
 			__ttm_bo_unreserve(bo);
 
@@ -177,8 +180,7 @@ int ttm_eu_reserve_buffers(struct ww_acquire_ctx *ticket,
 EXPORT_SYMBOL(ttm_eu_reserve_buffers);
 
 void ttm_eu_fence_buffer_objects(struct ww_acquire_ctx *ticket,
-				 struct list_head *list,
-				 struct dma_fence *fence)
+				 struct list_head *list, struct fence *fence)
 {
 	struct ttm_validate_buffer *entry;
 	struct ttm_buffer_object *bo;

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Architecture-specific setup.
  *
@@ -21,10 +20,6 @@
 #include <linux/notifier.h>
 #include <linux/personality.h>
 #include <linux/sched.h>
-#include <linux/sched/debug.h>
-#include <linux/sched/hotplug.h>
-#include <linux/sched/task.h>
-#include <linux/sched/task_stack.h>
 #include <linux/stddef.h>
 #include <linux/thread_info.h>
 #include <linux/unistd.h>
@@ -46,7 +41,7 @@
 #include <asm/sal.h>
 #include <asm/switch_to.h>
 #include <asm/tlbflush.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/unwind.h>
 #include <asm/user.h>
 
@@ -575,22 +570,22 @@ flush_thread (void)
 }
 
 /*
- * Clean up state associated with a thread.  This is called when
+ * Clean up state associated with current thread.  This is called when
  * the thread calls exit().
  */
 void
-exit_thread (struct task_struct *tsk)
+exit_thread (void)
 {
 
-	ia64_drop_fpu(tsk);
+	ia64_drop_fpu(current);
 #ifdef CONFIG_PERFMON
        /* if needed, stop monitoring and flush state to perfmon context */
-	if (tsk->thread.pfm_context)
-		pfm_exit_thread(tsk);
+	if (current->thread.pfm_context)
+		pfm_exit_thread(current);
 
 	/* free debug register resources */
-	if (tsk->thread.flags & IA64_THREAD_DBG_VALID)
-		pfm_release_debug_registers(tsk);
+	if (current->thread.flags & IA64_THREAD_DBG_VALID)
+		pfm_release_debug_registers(current);
 #endif
 }
 

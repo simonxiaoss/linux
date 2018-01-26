@@ -1,7 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0
 #include <sys/time.h>
 #include <sys/prctl.h>
-#include <errno.h>
 #include <time.h>
 #include <stdlib.h>
 
@@ -307,7 +305,7 @@ out_free_nodes:
  * evsel->system_wide and evsel->tracking flags (respectively) with other events
  * sometimes enabled or disabled.
  */
-int test__switch_tracking(struct test *test __maybe_unused, int subtest __maybe_unused)
+int test__switch_tracking(void)
 {
 	const char *sched_switch = "sched:sched_switch";
 	struct switch_tracking switch_tracking = { .tids = NULL, };
@@ -419,7 +417,7 @@ int test__switch_tracking(struct test *test __maybe_unused, int subtest __maybe_
 	perf_evsel__set_sample_bit(tracking_evsel, TIME);
 
 	/* Config events */
-	perf_evlist__config(evlist, &opts, NULL);
+	perf_evlist__config(evlist, &opts);
 
 	/* Check moved event is still at the front */
 	if (cycles_evsel != perf_evlist__first(evlist)) {
@@ -434,7 +432,7 @@ int test__switch_tracking(struct test *test __maybe_unused, int subtest __maybe_
 	}
 
 	/* Check non-tracking events are not tracking */
-	evlist__for_each_entry(evlist, evsel) {
+	evlist__for_each(evlist, evsel) {
 		if (evsel != tracking_evsel) {
 			if (evsel->attr.mmap || evsel->attr.comm) {
 				pr_debug("Non-tracking event is tracking\n");
@@ -457,7 +455,7 @@ int test__switch_tracking(struct test *test __maybe_unused, int subtest __maybe_
 
 	perf_evlist__enable(evlist);
 
-	err = perf_evsel__disable(cpu_clocks_evsel);
+	err = perf_evlist__disable_event(evlist, cpu_clocks_evsel);
 	if (err) {
 		pr_debug("perf_evlist__disable_event failed!\n");
 		goto out_err;
@@ -476,7 +474,7 @@ int test__switch_tracking(struct test *test __maybe_unused, int subtest __maybe_
 		goto out_err;
 	}
 
-	err = perf_evsel__disable(cycles_evsel);
+	err = perf_evlist__disable_event(evlist, cycles_evsel);
 	if (err) {
 		pr_debug("perf_evlist__disable_event failed!\n");
 		goto out_err;
@@ -502,7 +500,7 @@ int test__switch_tracking(struct test *test __maybe_unused, int subtest __maybe_
 		goto out_err;
 	}
 
-	err = perf_evsel__enable(cycles_evsel);
+	err = perf_evlist__enable_event(evlist, cycles_evsel);
 	if (err) {
 		pr_debug("perf_evlist__disable_event failed!\n");
 		goto out_err;

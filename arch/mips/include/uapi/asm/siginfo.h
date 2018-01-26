@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * This file is subject to the terms and conditions of the GNU General Public
  * License.  See the file "COPYING" in the main directory of this archive
@@ -87,15 +86,10 @@ typedef struct siginfo {
 			int _trapno;	/* TRAP # which caused the signal */
 #endif
 			short _addr_lsb;
-			union {
-				/* used when si_code=SEGV_BNDERR */
-				struct {
-					void __user *_lower;
-					void __user *_upper;
-				} _addr_bnd;
-				/* used when si_code=SEGV_PKUERR */
-				__u32 _pkey;
-			};
+			struct {
+				void __user *_lower;
+				void __user *_upper;
+			} _addr_bnd;
 		} _sigfault;
 
 		/* SIGPOLL, SIGXFSZ (To do ...)	 */
@@ -121,7 +115,7 @@ typedef struct siginfo {
 #undef SI_TIMER
 #undef SI_MESGQ
 #define SI_ASYNCIO	-2	/* sent by AIO completion */
-#define SI_TIMER	-3	/* sent by timer expiration */
-#define SI_MESGQ	-4	/* sent by real time mesq state change */
+#define SI_TIMER __SI_CODE(__SI_TIMER, -3) /* sent by timer expiration */
+#define SI_MESGQ __SI_CODE(__SI_MESGQ, -4) /* sent by real time mesq state change */
 
 #endif /* _UAPI_ASM_SIGINFO_H */

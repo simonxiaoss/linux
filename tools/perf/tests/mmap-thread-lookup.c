@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
-#include <inttypes.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -13,7 +11,6 @@
 #include "thread_map.h"
 #include "symbol.h"
 #include "thread.h"
-#include "util.h"
 
 #define THREADS 4
 
@@ -132,7 +129,7 @@ static int synth_all(struct machine *machine)
 {
 	return perf_event__synthesize_threads(NULL,
 					      perf_event__process,
-					      machine, 0, 500, 1);
+					      machine, 0, 500);
 }
 
 static int synth_process(struct machine *machine)
@@ -152,6 +149,7 @@ static int synth_process(struct machine *machine)
 
 static int mmap_events(synth_cb synth)
 {
+	struct machines machines;
 	struct machine *machine;
 	int err, i;
 
@@ -164,7 +162,8 @@ static int mmap_events(synth_cb synth)
 	 */
 	TEST_ASSERT_VAL("failed to create threads", !threads_create());
 
-	machine = machine__new_host();
+	machines__init(&machines);
+	machine = &machines.host;
 
 	dump_trace = verbose > 1 ? 1 : 0;
 
@@ -204,7 +203,7 @@ static int mmap_events(synth_cb synth)
 	}
 
 	machine__delete_threads(machine);
-	machine__delete(machine);
+	machines__exit(&machines);
 	return err;
 }
 
@@ -222,7 +221,7 @@ static int mmap_events(synth_cb synth)
  *
  * by using all thread objects.
  */
-int test__mmap_thread_lookup(struct test *test __maybe_unused, int subtest __maybe_unused)
+int test__mmap_thread_lookup(void)
 {
 	/* perf_event__synthesize_threads synthesize */
 	TEST_ASSERT_VAL("failed with sythesizing all",

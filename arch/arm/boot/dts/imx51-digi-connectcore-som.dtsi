@@ -24,6 +24,7 @@
 &ecspi1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi1>;
+	fsl,spi-num-chipselects = <1>;
 	cs-gpios = <&gpio4 24 GPIO_ACTIVE_HIGH>;
 	status = "okay";
 
@@ -155,7 +156,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_esdhc2>;
 	cap-sdio-irq;
-	wakeup-source;
+	enable-sdio-wakeup;
 	keep-power-in-suspend;
 	max-frequency = <50000000>;
 	no-1-8-v;

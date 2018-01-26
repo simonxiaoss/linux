@@ -15,7 +15,6 @@
  * Joe Taylor <joe@tensilica.com, joetylr@yahoo.com>
  */
 
-#include <linux/dma-contiguous.h>
 #include <linux/gfp.h>
 #include <linux/highmem.h>
 #include <linux/mm.h>
@@ -25,6 +24,29 @@
 #include <linux/types.h>
 #include <asm/cacheflush.h>
 #include <asm/io.h>
+
+void dma_cache_sync(struct device *dev, void *vaddr, size_t size,
+		    enum dma_data_direction dir)
+{
+	switch (dir) {
+	case DMA_BIDIRECTIONAL:
+		__flush_invalidate_dcache_range((unsigned long)vaddr, size);
+		break;
+
+	case DMA_FROM_DEVICE:
+		__invalidate_dcache_range((unsigned long)vaddr, size);
+		break;
+
+	case DMA_TO_DEVICE:
+		__flush_dcache_range((unsigned long)vaddr, size);
+		break;
+
+	case DMA_NONE:
+		BUG();
+		break;
+	}
+}
+EXPORT_SYMBOL(dma_cache_sync);
 
 static void do_cache_op(dma_addr_t dma_handle, size_t size,
 			void (*fn)(unsigned long, unsigned long))
@@ -120,12 +142,10 @@ static void xtensa_sync_sg_for_device(struct device *dev,
 
 static void *xtensa_dma_alloc(struct device *dev, size_t size,
 			      dma_addr_t *handle, gfp_t flag,
-			      unsigned long attrs)
+			      struct dma_attrs *attrs)
 {
 	unsigned long ret;
 	unsigned long uncached = 0;
-	unsigned long count = PAGE_ALIGN(size) >> PAGE_SHIFT;
-	struct page *page = NULL;
 
 	/* ignore region speicifiers */
 
@@ -133,18 +153,10 @@ static void *xtensa_dma_alloc(struct device *dev, size_t size,
 
 	if (dev == NULL || (dev->coherent_dma_mask < 0xffffffff))
 		flag |= GFP_DMA;
+	ret = (unsigned long)__get_free_pages(flag, get_order(size));
 
-	if (gfpflags_allow_blocking(flag))
-		page = dma_alloc_from_contiguous(dev, count, get_order(size),
-						 flag);
-
-	if (!page)
-		page = alloc_pages(flag, get_order(size));
-
-	if (!page)
+	if (ret == 0)
 		return NULL;
-
-	ret = (unsigned long)page_address(page);
 
 	/* We currently don't support coherent memory outside KSEG */
 
@@ -158,45 +170,39 @@ static void *xtensa_dma_alloc(struct device *dev, size_t size,
 	return (void *)uncached;
 }
 
-static void xtensa_dma_free(struct device *dev, size_t size, void *vaddr,
-			    dma_addr_t dma_handle, unsigned long attrs)
+static void xtensa_dma_free(struct device *hwdev, size_t size, void *vaddr,
+			    dma_addr_t dma_handle, struct dma_attrs *attrs)
 {
 	unsigned long addr = (unsigned long)vaddr +
 		XCHAL_KSEG_CACHED_VADDR - XCHAL_KSEG_BYPASS_VADDR;
-	struct page *page = virt_to_page(addr);
-	unsigned long count = PAGE_ALIGN(size) >> PAGE_SHIFT;
 
 	BUG_ON(addr < XCHAL_KSEG_CACHED_VADDR ||
 	       addr > XCHAL_KSEG_CACHED_VADDR + XCHAL_KSEG_SIZE - 1);
 
-	if (!dma_release_from_contiguous(dev, page, count))
-		__free_pages(page, get_order(size));
+	free_pages(addr, get_order(size));
 }
 
 static dma_addr_t xtensa_map_page(struct device *dev, struct page *page,
 				  unsigned long offset, size_t size,
 				  enum dma_data_direction dir,
-				  unsigned long attrs)
+				  struct dma_attrs *attrs)
 {
 	dma_addr_t dma_handle = page_to_phys(page) + offset;
 
-	if (!(attrs & DMA_ATTR_SKIP_CPU_SYNC))
-		xtensa_sync_single_for_device(dev, dma_handle, size, dir);
-
+	xtensa_sync_single_for_device(dev, dma_handle, size, dir);
 	return dma_handle;
 }
 
 static void xtensa_unmap_page(struct device *dev, dma_addr_t dma_handle,
 			      size_t size, enum dma_data_direction dir,
-			      unsigned long attrs)
+			      struct dma_attrs *attrs)
 {
-	if (!(attrs & DMA_ATTR_SKIP_CPU_SYNC))
-		xtensa_sync_single_for_cpu(dev, dma_handle, size, dir);
+	xtensa_sync_single_for_cpu(dev, dma_handle, size, dir);
 }
 
 static int xtensa_map_sg(struct device *dev, struct scatterlist *sg,
 			 int nents, enum dma_data_direction dir,
-			 unsigned long attrs)
+			 struct dma_attrs *attrs)
 {
 	struct scatterlist *s;
 	int i;
@@ -211,7 +217,7 @@ static int xtensa_map_sg(struct device *dev, struct scatterlist *sg,
 static void xtensa_unmap_sg(struct device *dev,
 			    struct scatterlist *sg, int nents,
 			    enum dma_data_direction dir,
-			    unsigned long attrs)
+			    struct dma_attrs *attrs)
 {
 	struct scatterlist *s;
 	int i;
@@ -227,7 +233,7 @@ int xtensa_dma_mapping_error(struct device *dev, dma_addr_t dma_addr)
 	return 0;
 }
 
-const struct dma_map_ops xtensa_dma_map_ops = {
+struct dma_map_ops xtensa_dma_map_ops = {
 	.alloc = xtensa_dma_alloc,
 	.free = xtensa_dma_free,
 	.map_page = xtensa_map_page,

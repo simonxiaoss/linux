@@ -3955,15 +3955,16 @@ exit_session_conn_param:
 /*
  * Timer routines
  */
-static void qla4xxx_timer(struct timer_list *t);
 
-static void qla4xxx_start_timer(struct scsi_qla_host *ha,
+static void qla4xxx_start_timer(struct scsi_qla_host *ha, void *func,
 				unsigned long interval)
 {
 	DEBUG(printk("scsi: %s: Starting timer thread for adapter %d\n",
 		     __func__, ha->host->host_no));
-	timer_setup(&ha->timer, qla4xxx_timer, 0);
+	init_timer(&ha->timer);
 	ha->timer.expires = jiffies + interval * HZ;
+	ha->timer.data = (unsigned long)ha;
+	ha->timer.function = (void (*)(unsigned long))func;
 	add_timer(&ha->timer);
 	ha->timer_active = 1;
 }
@@ -4507,9 +4508,8 @@ static void qla4xxx_check_relogin_flash_ddb(struct iscsi_cls_session *cls_sess)
  * qla4xxx_timer - checks every second for work to do.
  * @ha: Pointer to host adapter structure.
  **/
-static void qla4xxx_timer(struct timer_list *t)
+static void qla4xxx_timer(struct scsi_qla_host *ha)
 {
-	struct scsi_qla_host *ha = from_timer(ha, t, timer);
 	int start_dpc = 0;
 	uint16_t w;
 
@@ -6304,9 +6304,13 @@ static int qla4xxx_compare_tuple_ddb(struct scsi_qla_host *ha,
 	 * ISID would not match firmware generated ISID.
 	 */
 	if (is_isid_compare) {
-		DEBUG2(ql4_printk(KERN_INFO, ha,
-			"%s: old ISID [%pmR] New ISID [%pmR]\n",
-			__func__, old_tddb->isid, new_tddb->isid));
+		DEBUG2(ql4_printk(KERN_INFO, ha, "%s: old ISID [%02x%02x%02x"
+			"%02x%02x%02x] New ISID [%02x%02x%02x%02x%02x%02x]\n",
+			__func__, old_tddb->isid[5], old_tddb->isid[4],
+			old_tddb->isid[3], old_tddb->isid[2], old_tddb->isid[1],
+			old_tddb->isid[0], new_tddb->isid[5], new_tddb->isid[4],
+			new_tddb->isid[3], new_tddb->isid[2], new_tddb->isid[1],
+			new_tddb->isid[0]));
 
 		if (memcmp(&old_tddb->isid[0], &new_tddb->isid[0],
 			   sizeof(old_tddb->isid)))
@@ -7921,7 +7925,10 @@ qla4xxx_sysfs_ddb_get_param(struct iscsi_bus_flash_session *fnode_sess,
 		rc = sprintf(buf, "%u\n", fnode_conn->keepalive_timeout);
 		break;
 	case ISCSI_FLASHNODE_ISID:
-		rc = sprintf(buf, "%pm\n", fnode_sess->isid);
+		rc = sprintf(buf, "%02x%02x%02x%02x%02x%02x\n",
+			     fnode_sess->isid[0], fnode_sess->isid[1],
+			     fnode_sess->isid[2], fnode_sess->isid[3],
+			     fnode_sess->isid[4], fnode_sess->isid[5]);
 		break;
 	case ISCSI_FLASHNODE_TSID:
 		rc = sprintf(buf, "%u\n", fnode_sess->tsid);
@@ -8664,6 +8671,7 @@ static int qla4xxx_probe_adapter(struct pci_dev *pdev,
 	init_completion(&ha->disable_acb_comp);
 	init_completion(&ha->idc_comp);
 	init_completion(&ha->link_up_comp);
+	init_completion(&ha->disable_acb_comp);
 
 	spin_lock_init(&ha->hardware_lock);
 	spin_lock_init(&ha->work_lock);
@@ -8805,7 +8813,7 @@ skip_retry_init:
 	ha->isp_ops->enable_intrs(ha);
 
 	/* Start timer thread. */
-	qla4xxx_start_timer(ha, 1);
+	qla4xxx_start_timer(ha, qla4xxx_timer, 1);
 
 	set_bit(AF_INIT_DONE, &ha->flags);
 
@@ -9538,15 +9546,15 @@ exit_host_reset:
  * driver calls the following device driver's callbacks
  *
  * - Fatal Errors - link_reset
- * - Non-Fatal Errors - driver's error_detected() which
+ * - Non-Fatal Errors - driver's pci_error_detected() which
  * returns CAN_RECOVER, NEED_RESET or DISCONNECT.
  *
  * PCI AER driver calls
- * CAN_RECOVER - driver's mmio_enabled(), mmio_enabled()
+ * CAN_RECOVER - driver's pci_mmio_enabled(), mmio_enabled
  *               returns RECOVERED or NEED_RESET if fw_hung
  * NEED_RESET - driver's slot_reset()
  * DISCONNECT - device is dead & cannot recover
- * RECOVERED - driver's resume()
+ * RECOVERED - driver's pci_resume()
  */
 static pci_ers_result_t
 qla4xxx_pci_error_detected(struct pci_dev *pdev, pci_channel_state_t state)

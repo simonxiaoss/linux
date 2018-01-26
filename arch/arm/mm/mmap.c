@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/arm/mm/mmap.c
  */
@@ -6,8 +5,7 @@
 #include <linux/mm.h>
 #include <linux/mman.h>
 #include <linux/shm.h>
-#include <linux/sched/signal.h>
-#include <linux/sched/mm.h>
+#include <linux/sched.h>
 #include <linux/io.h>
 #include <linux/personality.h>
 #include <linux/random.h>
@@ -175,7 +173,8 @@ unsigned long arch_mmap_rnd(void)
 {
 	unsigned long rnd;
 
-	rnd = get_random_long() & ((1UL << mmap_rnd_bits) - 1);
+	/* 8 bits of randomness in 20 address space bits */
+	rnd = (unsigned long)get_random_int() % (1 << 8);
 
 	return rnd << PAGE_SHIFT;
 }

@@ -550,10 +550,10 @@ static struct xor_block_template xor_block_pIII_sse = {
 #define XOR_TRY_TEMPLATES				\
 do {							\
 	AVX_XOR_SPEED;					\
-	if (boot_cpu_has(X86_FEATURE_XMM)) {				\
+	if (cpu_has_xmm) {				\
 		xor_speed(&xor_block_pIII_sse);		\
 		xor_speed(&xor_block_sse_pf64);		\
-	} else if (boot_cpu_has(X86_FEATURE_MMX)) {	\
+	} else if (cpu_has_mmx) {			\
 		xor_speed(&xor_block_pII_mmx);		\
 		xor_speed(&xor_block_p5_mmx);		\
 	} else {					\

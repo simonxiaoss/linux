@@ -22,13 +22,11 @@
  * Authors: Ben Skeggs
  */
 #include "dmacnv50.h"
-#include "head.h"
 #include "rootnv50.h"
 
 #include <core/client.h>
 
 #include <nvif/class.h>
-#include <nvif/cl507e.h>
 #include <nvif/unpack.h>
 
 int
@@ -43,15 +41,15 @@ nv50_disp_ovly_new(const struct nv50_disp_dmac_func *func,
 	} *args = data;
 	struct nvkm_object *parent = oclass->parent;
 	struct nv50_disp *disp = root->disp;
-	int head, ret = -ENOSYS;
+	int head, ret;
 	u64 push;
 
 	nvif_ioctl(parent, "create disp overlay channel dma size %d\n", size);
-	if (!(ret = nvif_unpack(ret, &data, &size, args->v0, 0, 0, false))) {
+	if (nvif_unpack(args->v0, 0, 0, false)) {
 		nvif_ioctl(parent, "create disp overlay channel dma vers %d "
 				   "pushbuf %016llx head %d\n",
 			   args->v0.version, args->v0.pushbuf, args->v0.head);
-		if (!nvkm_head_find(&disp->base, args->v0.head))
+		if (args->v0.head > disp->base.head.nr)
 			return -EINVAL;
 		push = args->v0.pushbuf;
 		head = args->v0.head;

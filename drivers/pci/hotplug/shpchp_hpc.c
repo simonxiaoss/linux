@@ -229,13 +229,14 @@ static inline int shpc_indirect_read(struct controller *ctrl, int index,
 /*
  * This is the interrupt polling timeout function.
  */
-static void int_poll_timeout(struct timer_list *t)
+static void int_poll_timeout(unsigned long data)
 {
-	struct controller *ctrl = from_timer(ctrl, t, poll_timer);
+	struct controller *ctrl = (struct controller *)data;
 
 	/* Poll for interrupt events.  regs == NULL => polling */
 	shpc_isr(0, ctrl);
 
+	init_timer(&ctrl->poll_timer);
 	if (!shpchp_poll_time)
 		shpchp_poll_time = 2; /* default polling interval is 2 sec */
 
@@ -251,6 +252,8 @@ static void start_int_poll_timer(struct controller *ctrl, int sec)
 	if ((sec <= 0) || (sec > 60))
 		sec = 2;
 
+	ctrl->poll_timer.function = &int_poll_timeout;
+	ctrl->poll_timer.data = (unsigned long)ctrl;
 	ctrl->poll_timer.expires = jiffies + sec * HZ;
 	add_timer(&ctrl->poll_timer);
 }
@@ -539,7 +542,7 @@ static int hpc_set_attention_status(struct slot *slot, u8 value)
 	u8 slot_cmd = 0;
 
 	switch (value) {
-		case 0:
+		case 0 :
 			slot_cmd = SET_ATTN_OFF;	/* OFF */
 			break;
 		case 1:
@@ -907,7 +910,7 @@ static int shpc_get_max_bus_speed(struct controller *ctrl)
 	return retval;
 }
 
-static const struct hpc_ops shpchp_hpc_ops = {
+static struct hpc_ops shpchp_hpc_ops = {
 	.power_on_slot			= hpc_power_on_slot,
 	.slot_enable			= hpc_slot_enable,
 	.slot_disable			= hpc_slot_disable,
@@ -1051,7 +1054,7 @@ int shpc_init(struct controller *ctrl, struct pci_dev *pdev)
 
 	if (shpchp_poll_mode) {
 		/* Install interrupt polling timer. Start with 10 sec delay */
-		timer_setup(&ctrl->poll_timer, int_poll_timeout, 0);
+		init_timer(&ctrl->poll_timer);
 		start_int_poll_timer(ctrl, 10);
 	} else {
 		/* Installs the interrupt handler */

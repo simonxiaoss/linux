@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2017, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -92,8 +92,8 @@ acpi_ev_update_gpe_enable_mask(struct acpi_gpe_event_info *gpe_event_info)
 		ACPI_SET_BIT(gpe_register_info->enable_for_run,
 			     (u8)register_bit);
 	}
-
 	gpe_register_info->enable_mask = gpe_register_info->enable_for_run;
+
 	return_ACPI_STATUS(AE_OK);
 }
 
@@ -126,60 +126,6 @@ acpi_status acpi_ev_enable_gpe(struct acpi_gpe_event_info *gpe_event_info)
 
 	status = acpi_hw_low_set_gpe(gpe_event_info, ACPI_GPE_ENABLE);
 	return_ACPI_STATUS(status);
-}
-
-/*******************************************************************************
- *
- * FUNCTION:    acpi_ev_mask_gpe
- *
- * PARAMETERS:  gpe_event_info          - GPE to be blocked/unblocked
- *              is_masked               - Whether the GPE is masked or not
- *
- * RETURN:      Status
- *
- * DESCRIPTION: Unconditionally mask/unmask a GPE during runtime.
- *
- ******************************************************************************/
-
-acpi_status
-acpi_ev_mask_gpe(struct acpi_gpe_event_info *gpe_event_info, u8 is_masked)
-{
-	struct acpi_gpe_register_info *gpe_register_info;
-	u32 register_bit;
-
-	ACPI_FUNCTION_TRACE(ev_mask_gpe);
-
-	gpe_register_info = gpe_event_info->register_info;
-	if (!gpe_register_info) {
-		return_ACPI_STATUS(AE_NOT_EXIST);
-	}
-
-	register_bit = acpi_hw_get_gpe_register_bit(gpe_event_info);
-
-	/* Perform the action */
-
-	if (is_masked) {
-		if (register_bit & gpe_register_info->mask_for_run) {
-			return_ACPI_STATUS(AE_BAD_PARAMETER);
-		}
-
-		(void)acpi_hw_low_set_gpe(gpe_event_info, ACPI_GPE_DISABLE);
-		ACPI_SET_BIT(gpe_register_info->mask_for_run, (u8)register_bit);
-	} else {
-		if (!(register_bit & gpe_register_info->mask_for_run)) {
-			return_ACPI_STATUS(AE_BAD_PARAMETER);
-		}
-
-		ACPI_CLEAR_BIT(gpe_register_info->mask_for_run,
-			       (u8)register_bit);
-		if (gpe_event_info->runtime_count
-		    && !gpe_event_info->disable_for_dispatch) {
-			(void)acpi_hw_low_set_gpe(gpe_event_info,
-						  ACPI_GPE_ENABLE);
-		}
-	}
-
-	return_ACPI_STATUS(AE_OK);
 }
 
 /*******************************************************************************
@@ -390,8 +336,8 @@ u32 acpi_ev_gpe_detect(struct acpi_gpe_xrupt_info *gpe_xrupt_list)
 	struct acpi_gpe_handler_info *gpe_handler_info;
 	u32 int_status = ACPI_INTERRUPT_NOT_HANDLED;
 	u8 enabled_status_byte;
-	u64 status_reg;
-	u64 enable_reg;
+	u32 status_reg;
+	u32 enable_reg;
 	acpi_cpu_flags flags;
 	u32 i;
 	u32 j;
@@ -472,7 +418,7 @@ u32 acpi_ev_gpe_detect(struct acpi_gpe_xrupt_info *gpe_xrupt_list)
 					  gpe_register_info->base_gpe_number,
 					  gpe_register_info->base_gpe_number +
 					  (ACPI_GPE_REGISTER_WIDTH - 1),
-					  (u32)status_reg, (u32)enable_reg,
+					  status_reg, enable_reg,
 					  gpe_register_info->enable_for_run,
 					  gpe_register_info->enable_for_wake));
 
@@ -494,7 +440,7 @@ u32 acpi_ev_gpe_detect(struct acpi_gpe_xrupt_info *gpe_xrupt_list)
 
 				gpe_event_info =
 				    &gpe_block->
-				    event_info[((acpi_size)i *
+				    event_info[((acpi_size) i *
 						ACPI_GPE_REGISTER_WIDTH) + j];
 				gpe_number =
 				    j + gpe_register_info->base_gpe_number;
@@ -706,7 +652,7 @@ static void ACPI_SYSTEM_XFACE acpi_ev_asynch_enable_gpe(void *context)
  *
  ******************************************************************************/
 
-acpi_status acpi_ev_finish_gpe(struct acpi_gpe_event_info *gpe_event_info)
+acpi_status acpi_ev_finish_gpe(struct acpi_gpe_event_info * gpe_event_info)
 {
 	acpi_status status;
 
@@ -728,7 +674,6 @@ acpi_status acpi_ev_finish_gpe(struct acpi_gpe_event_info *gpe_event_info)
 	 * in the event_info.
 	 */
 	(void)acpi_hw_low_set_gpe(gpe_event_info, ACPI_GPE_CONDITIONAL_ENABLE);
-	gpe_event_info->disable_for_dispatch = FALSE;
 	return (AE_OK);
 }
 
@@ -791,8 +736,6 @@ acpi_ev_gpe_dispatch(struct acpi_namespace_node *gpe_device,
 			return_UINT32(ACPI_INTERRUPT_NOT_HANDLED);
 		}
 	}
-
-	gpe_event_info->disable_for_dispatch = TRUE;
 
 	/*
 	 * Dispatch the GPE to either an installed handler or the control

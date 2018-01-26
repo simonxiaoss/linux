@@ -171,11 +171,13 @@ static int mantis_pci_probe(struct pci_dev *pdev,
 	struct mantis_pci_drvdata *drvdata;
 	struct mantis_pci *mantis;
 	struct mantis_hwconfig *config;
-	int err;
+	int err = 0;
 
-	mantis = kzalloc(sizeof(*mantis), GFP_KERNEL);
-	if (!mantis)
+	mantis = kzalloc(sizeof(struct mantis_pci), GFP_KERNEL);
+	if (mantis == NULL) {
+		printk(KERN_ERR "%s ERROR: Out of memory\n", __func__);
 		return -ENOMEM;
+	}
 
 	drvdata			= (void *)pci_id->driver_data;
 	mantis->num		= devs;
@@ -279,7 +281,7 @@ static void mantis_pci_remove(struct pci_dev *pdev)
 	return;
 }
 
-static const struct pci_device_id mantis_pci_table[] = {
+static struct pci_device_id mantis_pci_table[] = {
 	MAKE_ENTRY(TECHNISAT, CABLESTAR_HD2, &vp2040_config,
 		   RC_MAP_TECHNISAT_TS35),
 	MAKE_ENTRY(TECHNISAT, SKYSTAR_HD2_10, &vp1041_config,

@@ -28,16 +28,14 @@
 #include <linux/acpi_pmtmr.h>
 #include <linux/efi.h>
 #include <linux/cpumask.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/dmi.h>
 #include <linux/irq.h>
 #include <linux/slab.h>
 #include <linux/bootmem.h>
 #include <linux/ioport.h>
 #include <linux/pci.h>
-#include <linux/efi-bgrt.h>
 
-#include <asm/e820/api.h>
 #include <asm/irqdomain.h>
 #include <asm/pci_x86.h>
 #include <asm/pgtable.h>
@@ -78,7 +76,6 @@ int acpi_fix_pin2_polarity __initdata;
 static u64 acpi_lapic_addr __initdata = APIC_DEFAULT_PHYS_BASE;
 #endif
 
-#ifdef CONFIG_X86_IO_APIC
 /*
  * Locks related to IOAPIC hotplug
  * Hotplug side:
@@ -91,7 +88,6 @@ static u64 acpi_lapic_addr __initdata = APIC_DEFAULT_PHYS_BASE;
  *			->ioapic_lock
  */
 static DEFINE_MUTEX(acpi_ioapic_lock);
-#endif
 
 /* --------------------------------------------------------------------------
                               Boot-time Configuration
@@ -115,24 +111,24 @@ static u32 isa_irq_to_gsi[NR_IRQS_LEGACY] __read_mostly = {
 #define	ACPI_INVALID_GSI		INT_MIN
 
 /*
- * This is just a simple wrapper around early_memremap(),
+ * This is just a simple wrapper around early_ioremap(),
  * with sanity checks for phys == 0 and size == 0.
  */
-void __init __iomem *__acpi_map_table(unsigned long phys, unsigned long size)
+char *__init __acpi_map_table(unsigned long phys, unsigned long size)
 {
 
 	if (!phys || !size)
 		return NULL;
 
-	return early_memremap(phys, size);
+	return early_ioremap(phys, size);
 }
 
-void __init __acpi_unmap_table(void __iomem *map, unsigned long size)
+void __init __acpi_unmap_table(char *map, unsigned long size)
 {
 	if (!map || !size)
 		return;
 
-	early_memunmap(map, size);
+	early_iounmap(map, size);
 }
 
 #ifdef CONFIG_X86_LOCAL_APIC
@@ -140,7 +136,7 @@ static int __init acpi_parse_madt(struct acpi_table_header *table)
 {
 	struct acpi_table_madt *madt = NULL;
 
-	if (!boot_cpu_has(X86_FEATURE_APIC))
+	if (!cpu_has_apic)
 		return -EINVAL;
 
 	madt = (struct acpi_table_madt *)table;
@@ -165,15 +161,13 @@ static int __init acpi_parse_madt(struct acpi_table_header *table)
 /**
  * acpi_register_lapic - register a local apic and generates a logic cpu number
  * @id: local apic id to register
- * @acpiid: ACPI id to register
  * @enabled: this cpu is enabled or not
  *
  * Returns the logic cpu number which maps to the local apic
  */
-static int acpi_register_lapic(int id, u32 acpiid, u8 enabled)
+static int acpi_register_lapic(int id, u8 enabled)
 {
 	unsigned int ver = 0;
-	int cpu;
 
 	if (id >= MAX_LOCAL_APIC) {
 		printk(KERN_INFO PREFIX "skipped apicid that is too big\n");
@@ -186,23 +180,17 @@ static int acpi_register_lapic(int id, u32 acpiid, u8 enabled)
 	}
 
 	if (boot_cpu_physical_apicid != -1U)
-		ver = boot_cpu_apic_version;
+		ver = apic_version[boot_cpu_physical_apicid];
 
-	cpu = generic_processor_info(id, ver);
-	if (cpu >= 0)
-		early_per_cpu(x86_cpu_to_acpiid, cpu) = acpiid;
-
-	return cpu;
+	return generic_processor_info(id, ver);
 }
 
 static int __init
 acpi_parse_x2apic(struct acpi_subtable_header *header, const unsigned long end)
 {
 	struct acpi_madt_local_x2apic *processor = NULL;
-#ifdef CONFIG_X86_X2APIC
 	int apic_id;
 	u8 enabled;
-#endif
 
 	processor = (struct acpi_madt_local_x2apic *)header;
 
@@ -211,10 +199,9 @@ acpi_parse_x2apic(struct acpi_subtable_header *header, const unsigned long end)
 
 	acpi_table_print_madt_entry(header);
 
-#ifdef CONFIG_X86_X2APIC
 	apic_id = processor->local_apic_id;
 	enabled = processor->lapic_flags & ACPI_MADT_ENABLED;
-
+#ifdef CONFIG_X86_X2APIC
 	/*
 	 * We need to register disabled CPU as well to permit
 	 * counting disabled CPUs. This allows us to size
@@ -225,7 +212,7 @@ acpi_parse_x2apic(struct acpi_subtable_header *header, const unsigned long end)
 	if (!apic->apic_id_valid(apic_id) && enabled)
 		printk(KERN_WARNING PREFIX "x2apic entry ignored\n");
 	else
-		acpi_register_lapic(apic_id, processor->uid, enabled);
+		acpi_register_lapic(apic_id, enabled);
 #else
 	printk(KERN_WARNING PREFIX "x2apic entry ignored\n");
 #endif
@@ -245,10 +232,6 @@ acpi_parse_lapic(struct acpi_subtable_header * header, const unsigned long end)
 
 	acpi_table_print_madt_entry(header);
 
-	/* Ignore invalid ID */
-	if (processor->id == 0xff)
-		return 0;
-
 	/*
 	 * We need to register disabled CPU as well to permit
 	 * counting disabled CPUs. This allows us to size
@@ -257,7 +240,6 @@ acpi_parse_lapic(struct acpi_subtable_header * header, const unsigned long end)
 	 * when we use CPU hotplug.
 	 */
 	acpi_register_lapic(processor->id,	/* APIC ID */
-			    processor->processor_id, /* ACPI ID */
 			    processor->lapic_flags & ACPI_MADT_ENABLED);
 
 	return 0;
@@ -276,7 +258,6 @@ acpi_parse_sapic(struct acpi_subtable_header *header, const unsigned long end)
 	acpi_table_print_madt_entry(header);
 
 	acpi_register_lapic((processor->id << 8) | processor->eid,/* APIC ID */
-			    processor->processor_id, /* ACPI ID */
 			    processor->lapic_flags & ACPI_MADT_ENABLED);
 
 	return 0;
@@ -292,8 +273,6 @@ acpi_parse_lapic_addr_ovr(struct acpi_subtable_header * header,
 
 	if (BAD_MADT_ENTRY(lapic_addr_ovr, end))
 		return -EINVAL;
-
-	acpi_table_print_madt_entry(header);
 
 	acpi_lapic_addr = lapic_addr_ovr->address;
 
@@ -742,26 +721,24 @@ static void __init acpi_set_irq_model_ioapic(void)
 #ifdef CONFIG_ACPI_HOTPLUG_CPU
 #include <acpi/processor.h>
 
-static int acpi_map_cpu2node(acpi_handle handle, int cpu, int physid)
+static void acpi_map_cpu2node(acpi_handle handle, int cpu, int physid)
 {
 #ifdef CONFIG_ACPI_NUMA
 	int nid;
 
 	nid = acpi_get_node(handle);
-	if (nid != NUMA_NO_NODE) {
+	if (nid != -1) {
 		set_apicid_to_node(physid, nid);
 		numa_set_node(cpu, nid);
 	}
 #endif
-	return 0;
 }
 
-int acpi_map_cpu(acpi_handle handle, phys_cpuid_t physid, u32 acpi_id,
-		 int *pcpu)
+int acpi_map_cpu(acpi_handle handle, phys_cpuid_t physid, int *pcpu)
 {
 	int cpu;
 
-	cpu = acpi_register_lapic(physid, acpi_id, ACPI_MADT_ENABLED);
+	cpu = acpi_register_lapic(physid, ACPI_MADT_ENABLED);
 	if (cpu < 0) {
 		pr_info(PREFIX "Unable to map lapic to logical cpu number\n");
 		return cpu;
@@ -959,27 +936,6 @@ late_initcall(hpet_insert_resource);
 
 static int __init acpi_parse_fadt(struct acpi_table_header *table)
 {
-	if (!(acpi_gbl_FADT.boot_flags & ACPI_FADT_LEGACY_DEVICES)) {
-		pr_debug("ACPI: no legacy devices present\n");
-		x86_platform.legacy.devices.pnpbios = 0;
-	}
-
-	if (acpi_gbl_FADT.header.revision >= FADT2_REVISION_ID &&
-	    !(acpi_gbl_FADT.boot_flags & ACPI_FADT_8042) &&
-	    x86_platform.legacy.i8042 != X86_LEGACY_I8042_PLATFORM_ABSENT) {
-		pr_debug("ACPI: i8042 controller is absent\n");
-		x86_platform.legacy.i8042 = X86_LEGACY_I8042_FIRMWARE_ABSENT;
-	}
-
-	if (acpi_gbl_FADT.boot_flags & ACPI_FADT_NO_CMOS_RTC) {
-		pr_debug("ACPI: not registering RTC platform device\n");
-		x86_platform.legacy.rtc = 0;
-	}
-
-	if (acpi_gbl_FADT.boot_flags & ACPI_FADT_NO_VGA) {
-		pr_debug("ACPI: probing for VGA not safe\n");
-		x86_platform.legacy.no_vga = 1;
-	}
 
 #ifdef CONFIG_X86_PM_TIMER
 	/* detect the location of the ACPI PM Timer */
@@ -1018,12 +974,12 @@ static int __init early_acpi_parse_madt_lapic_addr_ovr(void)
 {
 	int count;
 
-	if (!boot_cpu_has(X86_FEATURE_APIC))
+	if (!cpu_has_apic)
 		return -ENODEV;
 
 	/*
 	 * Note that the LAPIC address is obtained from the MADT (32-bit value)
-	 * and (optionally) overridden by a LAPIC_ADDR_OVR entry (64-bit value).
+	 * and (optionally) overriden by a LAPIC_ADDR_OVR entry (64-bit value).
 	 */
 
 	count = acpi_table_parse_madt(ACPI_MADT_TYPE_LOCAL_APIC_OVERRIDE,
@@ -1046,8 +1002,23 @@ static int __init acpi_parse_madt_lapic_entries(void)
 	int ret;
 	struct acpi_subtable_proc madt_proc[2];
 
-	if (!boot_cpu_has(X86_FEATURE_APIC))
+	if (!cpu_has_apic)
 		return -ENODEV;
+
+	/*
+	 * Note that the LAPIC address is obtained from the MADT (32-bit value)
+	 * and (optionally) overriden by a LAPIC_ADDR_OVR entry (64-bit value).
+	 */
+
+	count = acpi_table_parse_madt(ACPI_MADT_TYPE_LOCAL_APIC_OVERRIDE,
+				      acpi_parse_lapic_addr_ovr, 0);
+	if (count < 0) {
+		printk(KERN_ERR PREFIX
+		       "Error parsing LAPIC address override entry\n");
+		return count;
+	}
+
+	register_lapic_address(acpi_lapic_addr);
 
 	count = acpi_table_parse_madt(ACPI_MADT_TYPE_LOCAL_SAPIC,
 				      acpi_parse_sapic, MAX_LOCAL_APIC);
@@ -1067,8 +1038,8 @@ static int __init acpi_parse_madt_lapic_entries(void)
 			return ret;
 		}
 
-		count = madt_proc[0].count;
-		x2count = madt_proc[1].count;
+		x2count = madt_proc[0].count;
+		count = madt_proc[1].count;
 	}
 	if (!count && !x2count) {
 		printk(KERN_ERR PREFIX "No LAPIC entries present\n");
@@ -1106,7 +1077,7 @@ static void __init mp_config_acpi_legacy_irqs(void)
 	mp_bus_id_to_type[MP_ISA_BUS] = MP_BUS_ISA;
 #endif
 	set_bit(MP_ISA_BUS, mp_bus_not_pci);
-	pr_debug("Bus #%d is ISA (nIRQs: %d)\n", MP_ISA_BUS, nr_legacy_irqs());
+	pr_debug("Bus #%d is ISA\n", MP_ISA_BUS);
 
 	/*
 	 * Use the default configuration for the IRQs 0-15.  Unless
@@ -1177,7 +1148,7 @@ static int __init acpi_parse_madt_ioapic_entries(void)
 	if (acpi_disabled || acpi_noirq)
 		return -ENODEV;
 
-	if (!boot_cpu_has(X86_FEATURE_APIC))
+	if (!cpu_has_apic)
 		return -ENODEV;
 
 	/*
@@ -1393,7 +1364,7 @@ static void __init acpi_reduced_hw_init(void)
  * If your system is blacklisted here, but you find that acpi=force
  * works for you, please contact linux-acpi@vger.kernel.org
  */
-static const struct dmi_system_id acpi_dmi_table[] __initconst = {
+static struct dmi_system_id __initdata acpi_dmi_table[] = {
 	/*
 	 * Boxes that need ACPI disabled
 	 */
@@ -1468,7 +1439,7 @@ static const struct dmi_system_id acpi_dmi_table[] __initconst = {
 };
 
 /* second table for DMI checks that should run after early-quirks */
-static const struct dmi_system_id acpi_dmi_table_late[] __initconst = {
+static struct dmi_system_id __initdata acpi_dmi_table_late[] = {
 	/*
 	 * HP laptops which use a DSDT reporting as HP/SB400/10000,
 	 * which includes some code which overrides all temperature
@@ -1549,7 +1520,7 @@ void __init acpi_boot_table_init(void)
 	 * If acpi_disabled, bail out
 	 */
 	if (acpi_disabled)
-		return;
+		return; 
 
 	/*
 	 * Initialize the ACPI boot-time table parser.
@@ -1620,8 +1591,6 @@ int __init acpi_boot_init(void)
 	acpi_process_madt();
 
 	acpi_table_parse(ACPI_SIG_HPET, acpi_parse_hpet);
-	if (IS_ENABLED(CONFIG_ACPI_BGRT))
-		acpi_table_parse(ACPI_SIG_BGRT, acpi_parse_bgrt);
 
 	if (!acpi_noirq)
 		x86_init.pci.init = pci_acpi_init;
@@ -1755,6 +1724,6 @@ int __acpi_release_global_lock(unsigned int *lock)
 
 void __init arch_reserve_mem_area(acpi_physical_address addr, size_t size)
 {
-	e820__range_add(addr, size, E820_TYPE_ACPI);
-	e820__update_table_print();
+	e820_add_region(addr, size, E820_ACPI);
+	update_e820();
 }

@@ -12,6 +12,9 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
  * File: device.h
  *
@@ -83,7 +86,7 @@
 #define CONFIG_PATH			"/etc/vntconfiguration.dat"
 
 #define MAX_UINTS			8
-#define OPTION_DEFAULT			{ [0 ... MAX_UINTS - 1] = -1}
+#define OPTION_DEFAULT			{ [0 ... MAX_UINTS-1] = -1}
 
 #define DUPLICATE_RX_CACHE_LENGTH       5
 
@@ -259,8 +262,8 @@ enum {
 };
 
 /* flags for options */
-#define DEVICE_FLAGS_UNPLUG		0
-#define DEVICE_FLAGS_DISCONNECTED	1
+#define DEVICE_FLAGS_UNPLUG		BIT(0)
+#define DEVICE_FLAGS_DISCONNECTED	BIT(1)
 
 struct vnt_private {
 	/* mac80211 */

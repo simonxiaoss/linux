@@ -206,10 +206,9 @@ static loff_t sm_mkoffset(struct sm_ftl *ftl, int zone, int block, int boffset)
 }
 
 /* Breaks offset into parts */
-static void sm_break_offset(struct sm_ftl *ftl, loff_t loffset,
+static void sm_break_offset(struct sm_ftl *ftl, loff_t offset,
 			    int *zone, int *block, int *boffset)
 {
-	u64 offset = loffset;
 	*boffset = do_div(offset, ftl->block_size);
 	*block = do_div(offset, ftl->max_lba);
 	*zone = offset >= ftl->zone_count ? -1 : offset;
@@ -386,7 +385,7 @@ restart:
 		if (test_bit(boffset / SM_SECTOR_SIZE, &invalid_bitmap)) {
 
 			sm_printk("sector %d of block at LBA %d of zone %d"
-				" couldn't be read, marking it as invalid",
+				" coudn't be read, marking it as invalid",
 				boffset / SM_SECTOR_SIZE, lba, zone);
 
 			oob.data_status = 0;
@@ -989,9 +988,9 @@ restart:
 
 
 /* flush timer, runs a second after last write */
-static void sm_cache_flush_timer(struct timer_list *t)
+static void sm_cache_flush_timer(unsigned long data)
 {
-	struct sm_ftl *ftl = from_timer(ftl, t, timer);
+	struct sm_ftl *ftl = (struct sm_ftl *)data;
 	queue_work(cache_flush_workqueue, &ftl->flush_work);
 }
 
@@ -1139,7 +1138,7 @@ static void sm_add_mtd(struct mtd_blktrans_ops *tr, struct mtd_info *mtd)
 
 
 	mutex_init(&ftl->mutex);
-	timer_setup(&ftl->timer, sm_cache_flush_timer, 0);
+	setup_timer(&ftl->timer, sm_cache_flush_timer, (unsigned long)ftl);
 	INIT_WORK(&ftl->flush_work, sm_cache_flush_work);
 	init_completion(&ftl->erase_completion);
 

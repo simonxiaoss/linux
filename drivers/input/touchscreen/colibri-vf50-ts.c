@@ -21,7 +21,6 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
@@ -310,6 +309,8 @@ static int vf50_ts_probe(struct platform_device *pdev)
 		dev_err(dev, "Failed to allocate TS input device\n");
 		return -ENOMEM;
 	}
+
+	platform_set_drvdata(pdev, touchdev);
 
 	input->name = DRIVER_NAME;
 	input->id.bustype = BUS_HOST;

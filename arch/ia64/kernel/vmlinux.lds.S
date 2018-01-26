@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 
 #include <asm/cache.h>
 #include <asm/ptrace.h>
@@ -47,7 +46,6 @@ SECTIONS {
 		__end_ivt_text = .;
 		TEXT_TEXT
 		SCHED_TEXT
-		CPUIDLE_TEXT
 		LOCK_TEXT
 		KPROBES_TEXT
 		*(.gnu.linkonce.t*)
@@ -192,8 +190,6 @@ SECTIONS {
 		*(.gnu.linkonce.d*)
 		CONSTRUCTORS
 	}
-
-	BUG_TABLE
 
 	. = ALIGN(16);	/* gp must be 16-byte aligned for exc. table */
 	.got : AT(ADDR(.got) - LOAD_OFFSET) {

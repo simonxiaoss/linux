@@ -448,11 +448,7 @@ static void wl1251_op_stop(struct ieee80211_hw *hw)
 	WARN_ON(wl->state != WL1251_STATE_ON);
 
 	if (wl->scanning) {
-		struct cfg80211_scan_info info = {
-			.aborted = true,
-		};
-
-		ieee80211_scan_completed(wl->hw, &info);
+		ieee80211_scan_completed(wl->hw, true);
 		wl->scanning = false;
 	}
 
@@ -566,7 +562,7 @@ static int wl1251_build_null_data(struct wl1251 *wl)
 		size = sizeof(struct wl12xx_null_data_template);
 		ptr = NULL;
 	} else {
-		skb = ieee80211_nullfunc_get(wl->hw, wl->vif, false);
+		skb = ieee80211_nullfunc_get(wl->hw, wl->vif);
 		if (!skb)
 			goto out;
 		size = skb->len;
@@ -1036,7 +1032,7 @@ static int wl1251_op_hw_scan(struct ieee80211_hw *hw,
 		goto out_idle;
 	}
 	if (req->ie_len)
-		skb_put_data(skb, req->ie, req->ie_len);
+		memcpy(skb_put(skb, req->ie_len), req->ie, req->ie_len);
 
 	ret = wl1251_cmd_template_set(wl, CMD_PROBE_REQ, skb->data,
 				      skb->len);
@@ -1486,7 +1482,7 @@ int wl1251_init_ieee80211(struct wl1251 *wl)
 	wl->hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
 					 BIT(NL80211_IFTYPE_ADHOC);
 	wl->hw->wiphy->max_scan_ssids = 1;
-	wl->hw->wiphy->bands[NL80211_BAND_2GHZ] = &wl1251_band_2ghz;
+	wl->hw->wiphy->bands[IEEE80211_BAND_2GHZ] = &wl1251_band_2ghz;
 
 	wl->hw->queues = 4;
 

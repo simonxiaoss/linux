@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * LEGO USB Tower driver
  *
  * Copyright (C) 2003 David Glance <davidgsf@sourceforge.net>
  *               2001-2004 Juergen Stuber <starblue@users.sourceforge.net>
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License as
+ *	published by the Free Software Foundation; either version 2 of
+ *	the License, or (at your option) any later version.
  *
  * derived from USB Skeleton driver - 0.5
  * Copyright (C) 2001 Greg Kroah-Hartman (greg@kroah.com)
@@ -79,11 +83,13 @@
 #include <linux/module.h>
 #include <linux/completion.h>
 #include <linux/mutex.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <linux/usb.h>
 #include <linux/poll.h>
 
 
+/* Version Information */
+#define DRIVER_VERSION "v0.96"
 #define DRIVER_AUTHOR "Juergen Stuber <starblue@sourceforge.net>"
 #define DRIVER_DESC "LEGO USB Tower Driver"
 
@@ -675,7 +681,7 @@ static ssize_t tower_write (struct file *file, const char __user *buffer, size_t
 
 	/* write the data into interrupt_out_buffer from userspace */
 	bytes_to_write = min_t(int, count, write_buffer_size);
-	dev_dbg(&dev->udev->dev, "%s: count = %zd, bytes_to_write = %zd\n",
+	dev_dbg(&dev->udev->dev, "%s: count = %Zd, bytes_to_write = %Zd\n",
 		__func__, count, bytes_to_write);
 
 	if (copy_from_user (dev->interrupt_out_buffer, buffer, bytes_to_write)) {
@@ -808,7 +814,10 @@ static int tower_probe (struct usb_interface *interface, const struct usb_device
 	struct device *idev = &interface->dev;
 	struct usb_device *udev = interface_to_usbdev(interface);
 	struct lego_usb_tower *dev = NULL;
+	struct usb_host_interface *iface_desc;
+	struct usb_endpoint_descriptor* endpoint;
 	struct tower_get_version_reply *get_version_reply = NULL;
+	int i;
 	int retval = -ENOMEM;
 	int result;
 
@@ -816,8 +825,10 @@ static int tower_probe (struct usb_interface *interface, const struct usb_device
 
 	dev = kmalloc (sizeof(struct lego_usb_tower), GFP_KERNEL);
 
-	if (!dev)
+	if (dev == NULL) {
+		dev_err(idev, "Out of memory\n");
 		goto exit;
+	}
 
 	mutex_init(&dev->lock);
 
@@ -845,31 +856,53 @@ static int tower_probe (struct usb_interface *interface, const struct usb_device
 	dev->interrupt_out_urb = NULL;
 	dev->interrupt_out_busy = 0;
 
-	result = usb_find_common_endpoints_reverse(interface->cur_altsetting,
-			NULL, NULL,
-			&dev->interrupt_in_endpoint,
-			&dev->interrupt_out_endpoint);
-	if (result) {
-		dev_err(idev, "interrupt endpoints not found\n");
-		retval = result;
+	iface_desc = interface->cur_altsetting;
+
+	/* set up the endpoint information */
+	for (i = 0; i < iface_desc->desc.bNumEndpoints; ++i) {
+		endpoint = &iface_desc->endpoint[i].desc;
+
+		if (usb_endpoint_xfer_int(endpoint)) {
+			if (usb_endpoint_dir_in(endpoint))
+				dev->interrupt_in_endpoint = endpoint;
+			else
+				dev->interrupt_out_endpoint = endpoint;
+		}
+	}
+	if(dev->interrupt_in_endpoint == NULL) {
+		dev_err(idev, "interrupt in endpoint not found\n");
+		goto error;
+	}
+	if (dev->interrupt_out_endpoint == NULL) {
+		dev_err(idev, "interrupt out endpoint not found\n");
 		goto error;
 	}
 
 	dev->read_buffer = kmalloc (read_buffer_size, GFP_KERNEL);
-	if (!dev->read_buffer)
+	if (!dev->read_buffer) {
+		dev_err(idev, "Couldn't allocate read_buffer\n");
 		goto error;
+	}
 	dev->interrupt_in_buffer = kmalloc (usb_endpoint_maxp(dev->interrupt_in_endpoint), GFP_KERNEL);
-	if (!dev->interrupt_in_buffer)
+	if (!dev->interrupt_in_buffer) {
+		dev_err(idev, "Couldn't allocate interrupt_in_buffer\n");
 		goto error;
+	}
 	dev->interrupt_in_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!dev->interrupt_in_urb)
+	if (!dev->interrupt_in_urb) {
+		dev_err(idev, "Couldn't allocate interrupt_in_urb\n");
 		goto error;
+	}
 	dev->interrupt_out_buffer = kmalloc (write_buffer_size, GFP_KERNEL);
-	if (!dev->interrupt_out_buffer)
+	if (!dev->interrupt_out_buffer) {
+		dev_err(idev, "Couldn't allocate interrupt_out_buffer\n");
 		goto error;
+	}
 	dev->interrupt_out_urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!dev->interrupt_out_urb)
+	if (!dev->interrupt_out_urb) {
+		dev_err(idev, "Couldn't allocate interrupt_out_urb\n");
 		goto error;
+	}
 	dev->interrupt_in_interval = interrupt_in_interval ? interrupt_in_interval : dev->interrupt_in_endpoint->bInterval;
 	dev->interrupt_out_interval = interrupt_out_interval ? interrupt_out_interval : dev->interrupt_out_endpoint->bInterval;
 

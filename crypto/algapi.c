@@ -93,15 +93,16 @@ static struct list_head *crypto_more_spawns(struct crypto_alg *alg,
 {
 	struct crypto_spawn *spawn, *n;
 
-	spawn = list_first_entry_or_null(stack, struct crypto_spawn, list);
-	if (!spawn)
+	if (list_empty(stack))
 		return NULL;
 
-	n = list_next_entry(spawn, list);
+	spawn = list_first_entry(stack, struct crypto_spawn, list);
+	n = list_entry(spawn->list.next, struct crypto_spawn, list);
 
 	if (spawn->alg && &n->list != stack && !n->alg)
 		n->alg = (n->list.next == stack) ? alg :
-			 &list_next_entry(n, list)->inst->alg;
+			 &list_entry(n->list.next, struct crypto_spawn,
+				     list)->inst->alg;
 
 	list_move(&spawn->list, secondary_spawns);
 
@@ -272,7 +273,7 @@ void crypto_alg_tested(const char *name, int err)
 			goto found;
 	}
 
-	pr_err("alg: Unexpected test result for %s: %d\n", name, err);
+	printk(KERN_ERR "alg: Unexpected test result for %s: %d\n", name, err);
 	goto unlock;
 
 found:
@@ -824,21 +825,6 @@ int crypto_attr_u32(struct rtattr *rta, u32 *num)
 }
 EXPORT_SYMBOL_GPL(crypto_attr_u32);
 
-int crypto_inst_setname(struct crypto_instance *inst, const char *name,
-			struct crypto_alg *alg)
-{
-	if (snprintf(inst->alg.cra_name, CRYPTO_MAX_ALG_NAME, "%s(%s)", name,
-		     alg->cra_name) >= CRYPTO_MAX_ALG_NAME)
-		return -ENAMETOOLONG;
-
-	if (snprintf(inst->alg.cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s(%s)",
-		     name, alg->cra_driver_name) >= CRYPTO_MAX_ALG_NAME)
-		return -ENAMETOOLONG;
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(crypto_inst_setname);
-
 void *crypto_alloc_instance2(const char *name, struct crypto_alg *alg,
 			     unsigned int head)
 {
@@ -853,8 +839,13 @@ void *crypto_alloc_instance2(const char *name, struct crypto_alg *alg,
 
 	inst = (void *)(p + head);
 
-	err = crypto_inst_setname(inst, name, alg);
-	if (err)
+	err = -ENAMETOOLONG;
+	if (snprintf(inst->alg.cra_name, CRYPTO_MAX_ALG_NAME, "%s(%s)", name,
+		     alg->cra_name) >= CRYPTO_MAX_ALG_NAME)
+		goto err_free_inst;
+
+	if (snprintf(inst->alg.cra_driver_name, CRYPTO_MAX_ALG_NAME, "%s(%s)",
+		     name, alg->cra_driver_name) >= CRYPTO_MAX_ALG_NAME)
 		goto err_free_inst;
 
 	return p;
@@ -909,11 +900,9 @@ int crypto_enqueue_request(struct crypto_queue *queue,
 	int err = -EINPROGRESS;
 
 	if (unlikely(queue->qlen >= queue->max_qlen)) {
-		if (!(request->flags & CRYPTO_TFM_REQ_MAY_BACKLOG)) {
-			err = -ENOSPC;
-			goto out;
-		}
 		err = -EBUSY;
+		if (!(request->flags & CRYPTO_TFM_REQ_MAY_BACKLOG))
+			goto out;
 		if (queue->backlog == &queue->list)
 			queue->backlog = &request->list;
 	}
@@ -976,71 +965,34 @@ void crypto_inc(u8 *a, unsigned int size)
 	__be32 *b = (__be32 *)(a + size);
 	u32 c;
 
-	if (IS_ENABLED(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS) ||
-	    IS_ALIGNED((unsigned long)b, __alignof__(*b)))
-		for (; size >= 4; size -= 4) {
-			c = be32_to_cpu(*--b) + 1;
-			*b = cpu_to_be32(c);
-			if (likely(c))
-				return;
-		}
+	for (; size >= 4; size -= 4) {
+		c = be32_to_cpu(*--b) + 1;
+		*b = cpu_to_be32(c);
+		if (c)
+			return;
+	}
 
 	crypto_inc_byte(a, size);
 }
 EXPORT_SYMBOL_GPL(crypto_inc);
 
-void __crypto_xor(u8 *dst, const u8 *src1, const u8 *src2, unsigned int len)
+static inline void crypto_xor_byte(u8 *a, const u8 *b, unsigned int size)
 {
-	int relalign = 0;
-
-	if (!IS_ENABLED(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS)) {
-		int size = sizeof(unsigned long);
-		int d = (((unsigned long)dst ^ (unsigned long)src1) |
-			 ((unsigned long)dst ^ (unsigned long)src2)) &
-			(size - 1);
-
-		relalign = d ? 1 << __ffs(d) : size;
-
-		/*
-		 * If we care about alignment, process as many bytes as
-		 * needed to advance dst and src to values whose alignments
-		 * equal their relative alignment. This will allow us to
-		 * process the remainder of the input using optimal strides.
-		 */
-		while (((unsigned long)dst & (relalign - 1)) && len > 0) {
-			*dst++ = *src1++ ^ *src2++;
-			len--;
-		}
-	}
-
-	while (IS_ENABLED(CONFIG_64BIT) && len >= 8 && !(relalign & 7)) {
-		*(u64 *)dst = *(u64 *)src1 ^  *(u64 *)src2;
-		dst += 8;
-		src1 += 8;
-		src2 += 8;
-		len -= 8;
-	}
-
-	while (len >= 4 && !(relalign & 3)) {
-		*(u32 *)dst = *(u32 *)src1 ^ *(u32 *)src2;
-		dst += 4;
-		src1 += 4;
-		src2 += 4;
-		len -= 4;
-	}
-
-	while (len >= 2 && !(relalign & 1)) {
-		*(u16 *)dst = *(u16 *)src1 ^ *(u16 *)src2;
-		dst += 2;
-		src1 += 2;
-		src2 += 2;
-		len -= 2;
-	}
-
-	while (len--)
-		*dst++ = *src1++ ^ *src2++;
+	for (; size; size--)
+		*a++ ^= *b++;
 }
-EXPORT_SYMBOL_GPL(__crypto_xor);
+
+void crypto_xor(u8 *dst, const u8 *src, unsigned int size)
+{
+	u32 *a = (u32 *)dst;
+	u32 *b = (u32 *)src;
+
+	for (; size >= 4; size -= 4)
+		*a++ ^= *b++;
+
+	crypto_xor_byte((u8 *)a, (u8 *)b, size);
+}
+EXPORT_SYMBOL_GPL(crypto_xor);
 
 unsigned int crypto_alg_extsize(struct crypto_alg *alg)
 {
@@ -1048,21 +1000,6 @@ unsigned int crypto_alg_extsize(struct crypto_alg *alg)
 	       (alg->cra_alignmask & ~(crypto_tfm_ctx_alignment() - 1));
 }
 EXPORT_SYMBOL_GPL(crypto_alg_extsize);
-
-int crypto_type_has_alg(const char *name, const struct crypto_type *frontend,
-			u32 type, u32 mask)
-{
-	int ret = 0;
-	struct crypto_alg *alg = crypto_find_alg(name, frontend, type, mask);
-
-	if (!IS_ERR(alg)) {
-		crypto_mod_put(alg);
-		ret = 1;
-	}
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(crypto_type_has_alg);
 
 static int __init crypto_algapi_init(void)
 {

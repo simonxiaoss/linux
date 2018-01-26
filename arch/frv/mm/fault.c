@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/frv/mm/fault.c
  *
@@ -34,7 +33,7 @@ asmlinkage void do_page_fault(int datammu, unsigned long esr0, unsigned long ear
 {
 	struct vm_area_struct *vma;
 	struct mm_struct *mm;
-	unsigned long _pme, lrai, lrad;
+	unsigned long _pme, lrai, lrad, fixup;
 	unsigned long flags = 0;
 	siginfo_t info;
 	pgd_t *pge;
@@ -165,7 +164,7 @@ asmlinkage void do_page_fault(int datammu, unsigned long esr0, unsigned long ear
 	 * make sure we exit gracefully rather than endlessly redo
 	 * the fault.
 	 */
-	fault = handle_mm_fault(vma, ear0, flags);
+	fault = handle_mm_fault(mm, vma, ear0, flags);
 	if (unlikely(fault & VM_FAULT_ERROR)) {
 		if (fault & VM_FAULT_OOM)
 			goto out_of_memory;
@@ -202,8 +201,10 @@ asmlinkage void do_page_fault(int datammu, unsigned long esr0, unsigned long ear
 
  no_context:
 	/* are we prepared to handle this kernel fault? */
-	if (fixup_exception(__frame))
+	if ((fixup = search_exception_table(__frame->pc)) != 0) {
+		__frame->pc = fixup;
 		return;
+	}
 
 /*
  * Oops. The kernel tried to access some bad page. We'll have to

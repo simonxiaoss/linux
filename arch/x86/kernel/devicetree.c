@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Architecture specific OF callbacks.
  */
@@ -152,7 +151,7 @@ static void __init dtb_lapic_setup(void)
 		return;
 
 	/* Did the boot loader setup the local APIC ? */
-	if (!boot_cpu_has(X86_FEATURE_APIC)) {
+	if (!cpu_has_apic) {
 		if (apic_force_enable(r.start))
 			return;
 	}
@@ -236,7 +235,8 @@ static void __init dtb_add_ioapic(struct device_node *dn)
 
 	ret = of_address_to_resource(dn, 0, &r);
 	if (ret) {
-		printk(KERN_ERR "Can't obtain address from device node %pOF.\n", dn);
+		printk(KERN_ERR "Can't obtain address from node %s.\n",
+				dn->full_name);
 		return;
 	}
 	mp_register_ioapic(++ioapic_id, r.start, gsi_top, &cfg);

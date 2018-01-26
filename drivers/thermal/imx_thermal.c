@@ -8,7 +8,6 @@
  */
 
 #include <linux/clk.h>
-#include <linux/cpufreq.h>
 #include <linux/cpu_cooling.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -25,7 +24,6 @@
 #include <linux/slab.h>
 #include <linux/thermal.h>
 #include <linux/types.h>
-#include <linux/nvmem-consumer.h>
 
 #define REG_SET		0x4
 #define REG_CLR		0x8
@@ -90,12 +88,11 @@ static struct thermal_soc_data thermal_imx6sx_data = {
 };
 
 struct imx_thermal_data {
-	struct cpufreq_policy *policy;
 	struct thermal_zone_device *tz;
 	struct thermal_cooling_device *cdev;
 	enum thermal_device_mode mode;
 	struct regmap *tempmon;
-	u32 c1, c2; /* See formula in imx_init_calib() */
+	u32 c1, c2; /* See formula in imx_get_sensor_data() */
 	int temp_passive;
 	int temp_critical;
 	int temp_max;
@@ -178,7 +175,7 @@ static int imx_get_temp(struct thermal_zone_device *tz, int *temp)
 
 	n_meas = (val & TEMPSENSE0_TEMP_CNT_MASK) >> TEMPSENSE0_TEMP_CNT_SHIFT;
 
-	/* See imx_init_calib() for formula derivation */
+	/* See imx_get_sensor_data() for formula derivation */
 	*temp = data->c2 - n_meas * data->c1;
 
 	/* Update alarm value to next higher trip point for TEMPMON_IMX6Q */
@@ -249,7 +246,7 @@ static int imx_set_mode(struct thermal_zone_device *tz,
 	}
 
 	data->mode = mode;
-	thermal_zone_device_update(tz, THERMAL_EVENT_UNSPECIFIED);
+	thermal_zone_device_update(tz);
 
 	return 0;
 }
@@ -347,11 +344,28 @@ static struct thermal_zone_device_ops imx_tz_ops = {
 	.set_trip_temp = imx_set_trip_temp,
 };
 
-static int imx_init_calib(struct platform_device *pdev, u32 val)
+static int imx_get_sensor_data(struct platform_device *pdev)
 {
 	struct imx_thermal_data *data = platform_get_drvdata(pdev);
+	struct regmap *map;
 	int t1, n1;
+	int ret;
+	u32 val;
 	u64 temp64;
+
+	map = syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
+					      "fsl,tempmon-data");
+	if (IS_ERR(map)) {
+		ret = PTR_ERR(map);
+		dev_err(&pdev->dev, "failed to get sensor regmap: %d\n", ret);
+		return ret;
+	}
+
+	ret = regmap_read(map, OCOTP_ANA1, &val);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to read sensor data: %d\n", ret);
+		return ret;
+	}
 
 	if (val == 0 || val == ~0) {
 		dev_err(&pdev->dev, "invalid sensor calibration data\n");
@@ -389,12 +403,12 @@ static int imx_init_calib(struct platform_device *pdev, u32 val)
 	data->c1 = temp64;
 	data->c2 = n1 * data->c1 + 1000 * t1;
 
-	return 0;
-}
-
-static void imx_init_temp_grade(struct platform_device *pdev, u32 val)
-{
-	struct imx_thermal_data *data = platform_get_drvdata(pdev);
+	/* use OTP for thermal grade */
+	ret = regmap_read(map, OCOTP_MEM0, &val);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to read temp grade: %d\n", ret);
+		return ret;
+	}
 
 	/* The maximum die temp is specified by the Temperature Grade */
 	switch ((val >> 6) & 0x3) {
@@ -422,55 +436,6 @@ static void imx_init_temp_grade(struct platform_device *pdev, u32 val)
 	 */
 	data->temp_critical = data->temp_max - (1000 * 5);
 	data->temp_passive = data->temp_max - (1000 * 10);
-}
-
-static int imx_init_from_tempmon_data(struct platform_device *pdev)
-{
-	struct regmap *map;
-	int ret;
-	u32 val;
-
-	map = syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
-					      "fsl,tempmon-data");
-	if (IS_ERR(map)) {
-		ret = PTR_ERR(map);
-		dev_err(&pdev->dev, "failed to get sensor regmap: %d\n", ret);
-		return ret;
-	}
-
-	ret = regmap_read(map, OCOTP_ANA1, &val);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to read sensor data: %d\n", ret);
-		return ret;
-	}
-	ret = imx_init_calib(pdev, val);
-	if (ret)
-		return ret;
-
-	ret = regmap_read(map, OCOTP_MEM0, &val);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to read sensor data: %d\n", ret);
-		return ret;
-	}
-	imx_init_temp_grade(pdev, val);
-
-	return 0;
-}
-
-static int imx_init_from_nvmem_cells(struct platform_device *pdev)
-{
-	int ret;
-	u32 val;
-
-	ret = nvmem_cell_read_u32(&pdev->dev, "calib", &val);
-	if (ret)
-		return ret;
-	imx_init_calib(pdev, val);
-
-	ret = nvmem_cell_read_u32(&pdev->dev, "temp_grade", &val);
-	if (ret)
-		return ret;
-	imx_init_temp_grade(pdev, val);
 
 	return 0;
 }
@@ -492,7 +457,7 @@ static irqreturn_t imx_thermal_alarm_irq_thread(int irq, void *dev)
 	dev_dbg(&data->tz->device, "THERMAL ALARM: T > %d\n",
 		data->alarm_temp / 1000);
 
-	thermal_zone_device_update(data->tz, THERMAL_EVENT_UNSPECIFIED);
+	thermal_zone_device_update(data->tz);
 
 	return IRQ_HANDLED;
 }
@@ -506,6 +471,8 @@ MODULE_DEVICE_TABLE(of, of_imx_thermal_match);
 
 static int imx_thermal_probe(struct platform_device *pdev)
 {
+	const struct of_device_id *of_id =
+		of_match_device(of_imx_thermal_match, &pdev->dev);
 	struct imx_thermal_data *data;
 	struct regmap *map;
 	int measure_freq;
@@ -523,11 +490,7 @@ static int imx_thermal_probe(struct platform_device *pdev)
 	}
 	data->tempmon = map;
 
-	data->socdata = of_device_get_match_data(&pdev->dev);
-	if (!data->socdata) {
-		dev_err(&pdev->dev, "no device match found\n");
-		return -ENODEV;
-	}
+	data->socdata = of_id->data;
 
 	/* make sure the IRQ flag is clear before enabling irq on i.MX6SX */
 	if (data->socdata->version == TEMPMON_IMX6SX) {
@@ -547,21 +510,10 @@ static int imx_thermal_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, data);
 
-	if (of_find_property(pdev->dev.of_node, "nvmem-cells", NULL)) {
-		ret = imx_init_from_nvmem_cells(pdev);
-		if (ret == -EPROBE_DEFER)
-			return ret;
-		if (ret) {
-			dev_err(&pdev->dev, "failed to init from nvmem: %d\n",
-				ret);
-			return ret;
-		}
-	} else {
-		ret = imx_init_from_tempmon_data(pdev);
-		if (ret) {
-			dev_err(&pdev->dev, "failed to init from from fsl,tempmon-data\n");
-			return ret;
-		}
+	ret = imx_get_sensor_data(pdev);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to get sensor data\n");
+		return ret;
 	}
 
 	/* Make sure sensor is in known good state for measurements */
@@ -571,18 +523,13 @@ static int imx_thermal_probe(struct platform_device *pdev)
 	regmap_write(map, MISC0 + REG_SET, MISC0_REFTOP_SELBIASOFF);
 	regmap_write(map, TEMPSENSE0 + REG_SET, TEMPSENSE0_POWER_DOWN);
 
-	data->policy = cpufreq_cpu_get(0);
-	if (!data->policy) {
-		pr_debug("%s: CPUFreq policy not found\n", __func__);
-		return -EPROBE_DEFER;
-	}
-
-	data->cdev = cpufreq_cooling_register(data->policy);
+	data->cdev = cpufreq_cooling_register(cpu_present_mask);
 	if (IS_ERR(data->cdev)) {
 		ret = PTR_ERR(data->cdev);
-		dev_err(&pdev->dev,
-			"failed to register cpufreq cooling device: %d\n", ret);
-		cpufreq_cpu_put(data->policy);
+		if (ret != -EPROBE_DEFER)
+			dev_err(&pdev->dev,
+				"failed to register cpufreq cooling device: %d\n",
+				ret);
 		return ret;
 	}
 
@@ -593,7 +540,6 @@ static int imx_thermal_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev,
 				"failed to get thermal clk: %d\n", ret);
 		cpufreq_cooling_unregister(data->cdev);
-		cpufreq_cpu_put(data->policy);
 		return ret;
 	}
 
@@ -608,7 +554,6 @@ static int imx_thermal_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev, "failed to enable thermal clk: %d\n", ret);
 		cpufreq_cooling_unregister(data->cdev);
-		cpufreq_cpu_put(data->policy);
 		return ret;
 	}
 
@@ -624,7 +569,6 @@ static int imx_thermal_probe(struct platform_device *pdev)
 			"failed to register thermal zone device %d\n", ret);
 		clk_disable_unprepare(data->thermal_clk);
 		cpufreq_cooling_unregister(data->cdev);
-		cpufreq_cpu_put(data->policy);
 		return ret;
 	}
 
@@ -653,7 +597,6 @@ static int imx_thermal_probe(struct platform_device *pdev)
 		clk_disable_unprepare(data->thermal_clk);
 		thermal_zone_device_unregister(data->tz);
 		cpufreq_cooling_unregister(data->cdev);
-		cpufreq_cpu_put(data->policy);
 		return ret;
 	}
 
@@ -675,7 +618,6 @@ static int imx_thermal_remove(struct platform_device *pdev)
 
 	thermal_zone_device_unregister(data->tz);
 	cpufreq_cooling_unregister(data->cdev);
-	cpufreq_cpu_put(data->policy);
 
 	return 0;
 }
@@ -704,11 +646,8 @@ static int imx_thermal_resume(struct device *dev)
 {
 	struct imx_thermal_data *data = dev_get_drvdata(dev);
 	struct regmap *map = data->tempmon;
-	int ret;
 
-	ret = clk_prepare_enable(data->thermal_clk);
-	if (ret)
-		return ret;
+	clk_prepare_enable(data->thermal_clk);
 	/* Enabled thermal sensor after resume */
 	regmap_write(map, TEMPSENSE0 + REG_CLR, TEMPSENSE0_POWER_DOWN);
 	regmap_write(map, TEMPSENSE0 + REG_SET, TEMPSENSE0_MEASURE_TEMP);

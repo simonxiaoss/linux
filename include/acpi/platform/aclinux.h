@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2017, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -73,10 +73,6 @@
 #define ACPI_DEBUGGER
 #endif
 
-#ifdef CONFIG_ACPI_DEBUG
-#define ACPI_MUTEX_DEBUG
-#endif
-
 #include <linux/string.h>
 #include <linux/kernel.h>
 #include <linux/ctype.h>
@@ -91,8 +87,6 @@
 #ifdef CONFIG_ACPI
 #include <asm/acenv.h>
 #endif
-
-#define ACPI_INIT_FUNCTION __init
 
 #ifndef CONFIG_ACPI
 
@@ -128,7 +122,6 @@
 /* Host-dependent types and defines for in-kernel ACPICA */
 
 #define ACPI_MACHINE_WIDTH          BITS_PER_LONG
-#define ACPI_USE_NATIVE_MATH64
 #define ACPI_EXPORT_SYMBOL(symbol)  EXPORT_SYMBOL(symbol);
 #define strtoul                     simple_strtoul
 
@@ -157,8 +150,6 @@
  */
 #define ACPI_USE_ALTERNATE_PROTOTYPE_acpi_os_readable
 #define ACPI_USE_ALTERNATE_PROTOTYPE_acpi_os_writable
-#define ACPI_USE_ALTERNATE_PROTOTYPE_acpi_os_initialize_debugger
-#define ACPI_USE_ALTERNATE_PROTOTYPE_acpi_os_terminate_debugger
 
 /*
  * OSL interfaces used by utilities
@@ -171,34 +162,18 @@
 #define ACPI_USE_ALTERNATE_PROTOTYPE_acpi_os_get_next_filename
 #define ACPI_USE_ALTERNATE_PROTOTYPE_acpi_os_close_directory
 
-#define ACPI_MSG_ERROR          KERN_ERR "ACPI Error: "
-#define ACPI_MSG_EXCEPTION      KERN_ERR "ACPI Exception: "
-#define ACPI_MSG_WARNING        KERN_WARNING "ACPI Warning: "
-#define ACPI_MSG_INFO           KERN_INFO "ACPI: "
-
-#define ACPI_MSG_BIOS_ERROR     KERN_ERR "ACPI BIOS Error (bug): "
-#define ACPI_MSG_BIOS_WARNING   KERN_WARNING "ACPI BIOS Warning (bug): "
-
-/*
- * Linux wants to use designated initializers for function pointer structs.
- */
-#define ACPI_STRUCT_INIT(field, value)	.field = value
-
 #else				/* !__KERNEL__ */
 
-#define ACPI_USE_STANDARD_HEADERS
-
-#ifdef ACPI_USE_STANDARD_HEADERS
+#include <stdarg.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include <unistd.h>
-#endif
 
 /* Define/disable kernel-specific declarators */
 
 #ifndef __init
 #define __init
-#endif
-#ifndef __iomem
-#define __iomem
 #endif
 
 /* Host-dependent types and defines for user-space ACPICA */
@@ -207,8 +182,7 @@
 #define ACPI_CAST_PTHREAD_T(pthread) ((acpi_thread_id) (pthread))
 
 #if defined(__ia64__)    || defined(__x86_64__) ||\
-	defined(__aarch64__) || defined(__PPC64__) ||\
-	defined(__s390x__)
+	defined(__aarch64__) || defined(__PPC64__)
 #define ACPI_MACHINE_WIDTH          64
 #define COMPILER_DEPENDENT_INT64    long
 #define COMPILER_DEPENDENT_UINT64   unsigned long
@@ -217,7 +191,6 @@
 #define COMPILER_DEPENDENT_INT64    long long
 #define COMPILER_DEPENDENT_UINT64   unsigned long long
 #define ACPI_USE_NATIVE_DIVIDE
-#define ACPI_USE_NATIVE_MATH64
 #endif
 
 #ifndef __cdecl
@@ -225,5 +198,9 @@
 #endif
 
 #endif				/* __KERNEL__ */
+
+/* Linux uses GCC */
+
+#include <acpi/platform/acgcc.h>
 
 #endif				/* __ACLINUX_H__ */

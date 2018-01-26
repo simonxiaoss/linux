@@ -1,9 +1,34 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * MUSB OTG driver - support for Mentor's DMA controller
  *
  * Copyright 2005 Mentor Graphics Corporation
  * Copyright (C) 2005-2007 by Texas Instruments
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+ * 02110-1301 USA
+ *
+ * THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN
+ * NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+ * USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  */
 #include <linux/device.h>
 #include <linux/interrupt.h>
@@ -92,8 +117,8 @@ static void configure_channel(struct dma_channel *channel,
 	u8 bchannel = musb_channel->idx;
 	u16 csr = 0;
 
-	musb_dbg(musb, "%p, pkt_sz %d, addr %pad, len %d, mode %d",
-			channel, packet_sz, &dma_addr, len, mode);
+	dev_dbg(musb->controller, "%p, pkt_sz %d, addr 0x%x, len %d, mode %d\n",
+			channel, packet_sz, dma_addr, len, mode);
 
 	if (mode) {
 		csr |= 1 << MUSB_HSDMA_MODE1_SHIFT;
@@ -127,10 +152,10 @@ static int dma_channel_program(struct dma_channel *channel,
 	struct musb_dma_controller *controller = musb_channel->controller;
 	struct musb *musb = controller->private_data;
 
-	musb_dbg(musb, "ep%d-%s pkt_sz %d, dma_addr %pad length %d, mode %d",
+	dev_dbg(musb->controller, "ep%d-%s pkt_sz %d, dma_addr 0x%x length %d, mode %d\n",
 		musb_channel->epnum,
 		musb_channel->transmit ? "Tx" : "Rx",
-		packet_sz, &dma_addr, len, mode);
+		packet_sz, dma_addr, len, mode);
 
 	BUG_ON(channel->status == MUSB_DMA_STATUS_UNKNOWN ||
 		channel->status == MUSB_DMA_STATUS_BUSY);
@@ -241,7 +266,7 @@ static irqreturn_t dma_controller_irq(int irq, void *private_data)
 #endif
 
 	if (!int_hsdma) {
-		musb_dbg(musb, "spurious DMA irq");
+		dev_dbg(musb->controller, "spurious DMA irq\n");
 
 		for (bchannel = 0; bchannel < MUSB_HSDMA_CHANNELS; bchannel++) {
 			musb_channel = (struct musb_dma_channel *)
@@ -255,7 +280,7 @@ static irqreturn_t dma_controller_irq(int irq, void *private_data)
 			}
 		}
 
-		musb_dbg(musb, "int_hsdma = 0x%x", int_hsdma);
+		dev_dbg(musb->controller, "int_hsdma = 0x%x\n", int_hsdma);
 
 		if (!int_hsdma)
 			goto done;
@@ -282,7 +307,7 @@ static irqreturn_t dma_controller_irq(int irq, void *private_data)
 				channel->actual_len = addr
 					- musb_channel->start_addr;
 
-				musb_dbg(musb, "ch %p, 0x%x -> 0x%x (%zu / %d) %s",
+				dev_dbg(musb->controller, "ch %p, 0x%x -> 0x%x (%zu / %d) %s\n",
 					channel, musb_channel->start_addr,
 					addr, channel->actual_len,
 					musb_channel->len,

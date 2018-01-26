@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * include/asm-parisc/cache.h
  */
@@ -22,9 +21,6 @@
 #define ARCH_DMA_MINALIGN	L1_CACHE_BYTES
 
 #define __read_mostly __attribute__((__section__(".data..read_mostly")))
-
-/* Read-only memory is marked before mark_rodata_ro() is called. */
-#define __ro_after_init	__read_mostly
 
 void parisc_cache_init(void);	/* initializes cache-flushing */
 void disable_sr_hashing_asm(int); /* low level support for above */

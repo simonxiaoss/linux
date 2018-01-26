@@ -21,7 +21,7 @@
 #include <linux/slab.h>
 #include <asm/io.h>
 #include <linux/atomic.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/string.h>
 #include <asm/byteorder.h>
 
@@ -1727,7 +1727,7 @@ static int eni_do_init(struct atm_dev *dev)
 		printk("\n");
 		printk(KERN_ERR DEV_LABEL "(itf %d): can't set up page "
 		    "mapping\n",dev->number);
-		return -ENOMEM;
+		return error;
 	}
 	eni_dev->ioaddr = base;
 	eni_dev->base_diff = real_base - (unsigned long) base;
@@ -1779,7 +1779,7 @@ static int eni_do_init(struct atm_dev *dev)
 	printk(")\n");
 	printk(KERN_NOTICE DEV_LABEL "(itf %d): %s,%s\n",dev->number,
 	    eni_in(MID_RES_ID_MCON) & 0x200 ? "ASIC" : "FPGA",
-	    media_name[eni_in(MID_RES_ID_MCON) & DAUGHTER_ID]);
+	    media_name[eni_in(MID_RES_ID_MCON) & DAUGTHER_ID]);
 
 	error = suni_init(dev);
 	if (error)
@@ -1845,9 +1845,8 @@ static int eni_start(struct atm_dev *dev)
 	/* initialize memory management */
 	buffer_mem = eni_dev->mem - (buf - eni_dev->ram);
 	eni_dev->free_list_size = buffer_mem/MID_MIN_BUF_SIZE/2;
-	eni_dev->free_list = kmalloc_array(eni_dev->free_list_size + 1,
-					   sizeof(*eni_dev->free_list),
-					   GFP_KERNEL);
+	eni_dev->free_list = kmalloc(
+	    sizeof(struct eni_free)*(eni_dev->free_list_size+1),GFP_KERNEL);
 	if (!eni_dev->free_list) {
 		printk(KERN_ERR DEV_LABEL "(itf %d): couldn't get free page\n",
 		    dev->number);
@@ -2292,7 +2291,7 @@ err_disable:
 }
 
 
-static const struct pci_device_id eni_pci_tbl[] = {
+static struct pci_device_id eni_pci_tbl[] = {
 	{ PCI_VDEVICE(EF, PCI_DEVICE_ID_EF_ATM_FPGA), 0 /* FPGA */ },
 	{ PCI_VDEVICE(EF, PCI_DEVICE_ID_EF_ATM_ASIC), 1 /* ASIC */ },
 	{ 0, }
@@ -2326,7 +2325,11 @@ static int __init eni_init(void)
 {
 	struct sk_buff *skb; /* dummy for sizeof */
 
-	BUILD_BUG_ON(sizeof(skb->cb) < sizeof(struct eni_skb_prv));
+	if (sizeof(skb->cb) < sizeof(struct eni_skb_prv)) {
+		printk(KERN_ERR "eni_detect: skb->cb is too small (%Zd < %Zd)\n",
+		    sizeof(skb->cb),sizeof(struct eni_skb_prv));
+		return -EIO;
+	}
 	return pci_register_driver(&eni_driver);
 }
 

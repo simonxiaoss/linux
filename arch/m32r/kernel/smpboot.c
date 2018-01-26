@@ -45,7 +45,6 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
-#include <linux/sched/task.h>
 #include <linux/err.h>
 #include <linux/irq.h>
 #include <linux/bootmem.h>
@@ -433,7 +432,7 @@ int __init start_secondary(void *unused)
 	 */
 	local_flush_tlb_all();
 
-	cpu_startup_entry(CPUHP_AP_ONLINE_IDLE);
+	cpu_startup_entry(CPUHP_ONLINE);
 	return 0;
 }
 

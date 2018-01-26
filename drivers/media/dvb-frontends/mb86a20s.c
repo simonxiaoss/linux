@@ -293,11 +293,10 @@ static int mb86a20s_read_status(struct dvb_frontend *fe, enum fe_status *status)
 
 	*status = 0;
 
-	val = mb86a20s_readreg(state, 0x0a);
+	val = mb86a20s_readreg(state, 0x0a) & 0xf;
 	if (val < 0)
 		return val;
 
-	val &= 0xf;
 	if (val >= 2)
 		*status |= FE_HAS_SIGNAL;
 
@@ -1967,7 +1966,6 @@ static int mb86a20s_read_status_and_stats(struct dvb_frontend *fe,
 	if (status_nr < 0) {
 		dev_err(&state->i2c->dev,
 			"%s: Can't read frontend lock status\n", __func__);
-		rc = status_nr;
 		goto error;
 	}
 
@@ -2026,6 +2024,16 @@ static int mb86a20s_read_signal_strength_from_cache(struct dvb_frontend *fe,
 	return 0;
 }
 
+static int mb86a20s_get_frontend_dummy(struct dvb_frontend *fe)
+{
+	/*
+	 * get_frontend is now handled together with other stats
+	 * retrival, when read_status() is called, as some statistics
+	 * will depend on the layers detection.
+	 */
+	return 0;
+};
+
 static int mb86a20s_tune(struct dvb_frontend *fe,
 			bool re_tune,
 			unsigned int mode_flags,
@@ -2060,7 +2068,7 @@ static int mb86a20s_get_frontend_algo(struct dvb_frontend *fe)
         return DVBFE_ALGO_HW;
 }
 
-static const struct dvb_frontend_ops mb86a20s_ops;
+static struct dvb_frontend_ops mb86a20s_ops;
 
 struct dvb_frontend *mb86a20s_attach(const struct mb86a20s_config *config,
 				    struct i2c_adapter *i2c)
@@ -2071,9 +2079,12 @@ struct dvb_frontend *mb86a20s_attach(const struct mb86a20s_config *config,
 	dev_dbg(&i2c->dev, "%s called.\n", __func__);
 
 	/* allocate memory for the internal state */
-	state = kzalloc(sizeof(*state), GFP_KERNEL);
-	if (!state)
-		return NULL;
+	state = kzalloc(sizeof(struct mb86a20s_state), GFP_KERNEL);
+	if (state == NULL) {
+		dev_err(&i2c->dev,
+			"%s: unable to allocate memory for state\n", __func__);
+		goto error;
+	}
 
 	/* setup the state */
 	state->config = config;
@@ -2086,20 +2097,26 @@ struct dvb_frontend *mb86a20s_attach(const struct mb86a20s_config *config,
 
 	/* Check if it is a mb86a20s frontend */
 	rev = mb86a20s_readreg(state, 0);
-	if (rev != 0x13) {
-		kfree(state);
+
+	if (rev == 0x13) {
+		dev_info(&i2c->dev,
+			 "Detected a Fujitsu mb86a20s frontend\n");
+	} else {
 		dev_dbg(&i2c->dev,
 			"Frontend revision %d is unknown - aborting.\n",
 		       rev);
-		return NULL;
+		goto error;
 	}
 
-	dev_info(&i2c->dev, "Detected a Fujitsu mb86a20s frontend\n");
 	return &state->frontend;
+
+error:
+	kfree(state);
+	return NULL;
 }
 EXPORT_SYMBOL(mb86a20s_attach);
 
-static const struct dvb_frontend_ops mb86a20s_ops = {
+static struct dvb_frontend_ops mb86a20s_ops = {
 	.delsys = { SYS_ISDBT },
 	/* Use dib8000 values per default */
 	.info = {
@@ -2120,6 +2137,7 @@ static const struct dvb_frontend_ops mb86a20s_ops = {
 
 	.init = mb86a20s_initfe,
 	.set_frontend = mb86a20s_set_frontend,
+	.get_frontend = mb86a20s_get_frontend_dummy,
 	.read_status = mb86a20s_read_status_and_stats,
 	.read_signal_strength = mb86a20s_read_signal_strength_from_cache,
 	.tune = mb86a20s_tune,

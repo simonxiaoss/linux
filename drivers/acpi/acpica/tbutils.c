@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2017, Intel Corp.
+ * Copyright (C) 2000 - 2015, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -121,7 +121,6 @@ void acpi_tb_check_dsdt_header(void)
 		ACPI_BIOS_ERROR((AE_INFO,
 				 "The DSDT has been corrupted or replaced - "
 				 "old, new headers below"));
-
 		acpi_tb_print_table_header(0, &acpi_gbl_original_dsdt_header);
 		acpi_tb_print_table_header(0, acpi_gbl_DSDT);
 
@@ -141,9 +140,9 @@ void acpi_tb_check_dsdt_header(void)
  *
  * FUNCTION:    acpi_tb_copy_dsdt
  *
- * PARAMETERS:  table_index         - Index of installed table to copy
+ * PARAMETERS:  table_desc          - Installed table to copy
  *
- * RETURN:      The copied DSDT
+ * RETURN:      None
  *
  * DESCRIPTION: Implements a subsystem option to copy the DSDT to local memory.
  *              Some very bad BIOSs are known to either corrupt the DSDT or
@@ -174,7 +173,9 @@ struct acpi_table_header *acpi_tb_copy_dsdt(u32 table_index)
 				      ACPI_TABLE_ORIGIN_INTERNAL_VIRTUAL,
 				      new_table);
 
-	ACPI_INFO(("Forced DSDT copy: length 0x%05X copied locally, original unmapped", new_table->length));
+	ACPI_INFO((AE_INFO,
+		   "Forced DSDT copy: length 0x%05X copied locally, original unmapped",
+		   new_table->length));
 
 	return (new_table);
 }
@@ -231,7 +232,7 @@ acpi_tb_get_root_table_entry(u8 *table_entry, u32 table_entry_size)
 					   ACPI_FORMAT_UINT64(address64)));
 		}
 #endif
-		return ((acpi_physical_address)(address64));
+		return ((acpi_physical_address) (address64));
 	}
 }
 
@@ -239,7 +240,7 @@ acpi_tb_get_root_table_entry(u8 *table_entry, u32 table_entry_size)
  *
  * FUNCTION:    acpi_tb_parse_root_table
  *
- * PARAMETERS:  rsdp_address        - Pointer to the RSDP
+ * PARAMETERS:  rsdp                    - Pointer to the RSDP
  *
  * RETURN:      Status
  *
@@ -252,8 +253,7 @@ acpi_tb_get_root_table_entry(u8 *table_entry, u32 table_entry_size)
  *
  ******************************************************************************/
 
-acpi_status ACPI_INIT_FUNCTION
-acpi_tb_parse_root_table(acpi_physical_address rsdp_address)
+acpi_status __init acpi_tb_parse_root_table(acpi_physical_address rsdp_address)
 {
 	struct acpi_table_rsdp *rsdp;
 	u32 table_entry_size;
@@ -288,12 +288,12 @@ acpi_tb_parse_root_table(acpi_physical_address rsdp_address)
 		 * the XSDT if the revision is > 1 and the XSDT pointer is present,
 		 * as per the ACPI specification.
 		 */
-		address = (acpi_physical_address)rsdp->xsdt_physical_address;
+		address = (acpi_physical_address) rsdp->xsdt_physical_address;
 		table_entry_size = ACPI_XSDT_ENTRY_SIZE;
 	} else {
 		/* Root table is an RSDT (32-bit physical addresses) */
 
-		address = (acpi_physical_address)rsdp->rsdt_physical_address;
+		address = (acpi_physical_address) rsdp->rsdt_physical_address;
 		table_entry_size = ACPI_RSDT_ENTRY_SIZE;
 	}
 
@@ -379,102 +379,39 @@ next_table:
 	}
 
 	acpi_os_unmap_memory(table, length);
+
 	return_ACPI_STATUS(AE_OK);
 }
 
 /*******************************************************************************
  *
- * FUNCTION:    acpi_tb_get_table
+ * FUNCTION:    acpi_is_valid_signature
  *
- * PARAMETERS:  table_desc          - Table descriptor
- *              out_table           - Where the pointer to the table is returned
+ * PARAMETERS:  signature           - Sig string to be validated
  *
- * RETURN:      Status and pointer to the requested table
+ * RETURN:      TRUE if signature is correct length and has valid characters
  *
- * DESCRIPTION: Increase a reference to a table descriptor and return the
- *              validated table pointer.
- *              If the table descriptor is an entry of the root table list,
- *              this API must be invoked with ACPI_MTX_TABLES acquired.
+ * DESCRIPTION: Validate an ACPI table signature.
  *
  ******************************************************************************/
 
-acpi_status
-acpi_tb_get_table(struct acpi_table_desc *table_desc,
-		  struct acpi_table_header **out_table)
+u8 acpi_is_valid_signature(char *signature)
 {
-	acpi_status status;
+	u32 i;
 
-	ACPI_FUNCTION_TRACE(acpi_tb_get_table);
+	/* Validate the signature length */
 
-	if (table_desc->validation_count == 0) {
+	if (strlen(signature) != ACPI_NAME_SIZE) {
+		return (FALSE);
+	}
 
-		/* Table need to be "VALIDATED" */
+	/* Validate each character in the signature */
 
-		status = acpi_tb_validate_table(table_desc);
-		if (ACPI_FAILURE(status)) {
-			return_ACPI_STATUS(status);
+	for (i = 0; i < ACPI_NAME_SIZE; i++) {
+		if (!acpi_ut_valid_acpi_char(signature[i], i)) {
+			return (FALSE);
 		}
 	}
 
-	if (table_desc->validation_count < ACPI_MAX_TABLE_VALIDATIONS) {
-		table_desc->validation_count++;
-
-		/*
-		 * Detect validation_count overflows to ensure that the warning
-		 * message will only be printed once.
-		 */
-		if (table_desc->validation_count >= ACPI_MAX_TABLE_VALIDATIONS) {
-			ACPI_WARNING((AE_INFO,
-				      "Table %p, Validation count overflows\n",
-				      table_desc));
-		}
-	}
-
-	*out_table = table_desc->pointer;
-	return_ACPI_STATUS(AE_OK);
-}
-
-/*******************************************************************************
- *
- * FUNCTION:    acpi_tb_put_table
- *
- * PARAMETERS:  table_desc          - Table descriptor
- *
- * RETURN:      None
- *
- * DESCRIPTION: Decrease a reference to a table descriptor and release the
- *              validated table pointer if no references.
- *              If the table descriptor is an entry of the root table list,
- *              this API must be invoked with ACPI_MTX_TABLES acquired.
- *
- ******************************************************************************/
-
-void acpi_tb_put_table(struct acpi_table_desc *table_desc)
-{
-
-	ACPI_FUNCTION_TRACE(acpi_tb_put_table);
-
-	if (table_desc->validation_count < ACPI_MAX_TABLE_VALIDATIONS) {
-		table_desc->validation_count--;
-
-		/*
-		 * Detect validation_count underflows to ensure that the warning
-		 * message will only be printed once.
-		 */
-		if (table_desc->validation_count >= ACPI_MAX_TABLE_VALIDATIONS) {
-			ACPI_WARNING((AE_INFO,
-				      "Table %p, Validation count underflows\n",
-				      table_desc));
-			return_VOID;
-		}
-	}
-
-	if (table_desc->validation_count == 0) {
-
-		/* Table need to be "INVALIDATED" */
-
-		acpi_tb_invalidate_table(table_desc);
-	}
-
-	return_VOID;
+	return (TRUE);
 }

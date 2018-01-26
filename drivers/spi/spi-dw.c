@@ -107,9 +107,9 @@ static const struct file_operations dw_spi_regs_ops = {
 
 static int dw_spi_debugfs_init(struct dw_spi *dws)
 {
-	char name[32];
+	char name[128];
 
-	snprintf(name, 32, "dw_spi%d", dws->master->bus_num);
+	snprintf(name, 128, "dw_spi-%s", dev_name(&dws->master->dev));
 	dws->debugfs = debugfs_create_dir(name, NULL);
 	if (!dws->debugfs)
 		return -ENOMEM;
@@ -286,6 +286,7 @@ static int dw_spi_transfer_one(struct spi_master *master,
 	struct chip_data *chip = spi_get_ctldata(spi);
 	u8 imask = 0;
 	u16 txlevel = 0;
+	u16 clk_div;
 	u32 cr0;
 	int ret;
 
@@ -300,13 +301,13 @@ static int dw_spi_transfer_one(struct spi_master *master,
 	spi_enable_chip(dws, 0);
 
 	/* Handle per transfer options for bpw and speed */
-	if (transfer->speed_hz != dws->current_freq) {
-		if (transfer->speed_hz != chip->speed_hz) {
-			/* clk_div doesn't support odd number */
-			chip->clk_div = (DIV_ROUND_UP(dws->max_freq, transfer->speed_hz) + 1) & 0xfffe;
-			chip->speed_hz = transfer->speed_hz;
-		}
-		dws->current_freq = transfer->speed_hz;
+	if (transfer->speed_hz != chip->speed_hz) {
+		/* clk_div doesn't support odd number */
+		clk_div = (dws->max_freq / transfer->speed_hz + 1) & 0xfffe;
+
+		chip->speed_hz = transfer->speed_hz;
+		chip->clk_div = clk_div;
+
 		spi_set_clk(dws, chip->clk_div);
 	}
 	if (transfer->bits_per_word == 8) {
@@ -427,7 +428,7 @@ static int dw_spi_setup(struct spi_device *spi)
 		chip->type = chip_info->type;
 	}
 
-	chip->tmode = SPI_TMOD_TR;
+	chip->tmode = 0; /* Tx & Rx */
 
 	if (gpio_is_valid(spi->cs_gpio)) {
 		ret = gpio_direction_output(spi->cs_gpio,
@@ -486,9 +487,9 @@ int dw_spi_add_host(struct device *dev, struct dw_spi *dws)
 	dws->type = SSI_MOTO_SPI;
 	dws->dma_inited = 0;
 	dws->dma_addr = (dma_addr_t)(dws->paddr + DW_SPI_DR);
+	snprintf(dws->name, sizeof(dws->name), "dw_spi%d", dws->bus_num);
 
-	ret = request_irq(dws->irq, dw_spi_irq, IRQF_SHARED, dev_name(dev),
-			  master);
+	ret = request_irq(dws->irq, dw_spi_irq, IRQF_SHARED, dws->name, master);
 	if (ret < 0) {
 		dev_err(dev, "can not get IRQ\n");
 		goto err_free_master;
@@ -505,7 +506,6 @@ int dw_spi_add_host(struct device *dev, struct dw_spi *dws)
 	master->handle_err = dw_spi_handle_err;
 	master->max_speed_hz = dws->max_freq;
 	master->dev.of_node = dev->of_node;
-	master->flags = SPI_MASTER_GPIO_SS;
 
 	/* Basic HW init */
 	spi_hw_init(dev, dws);

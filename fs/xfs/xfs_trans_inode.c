@@ -73,12 +73,20 @@ xfs_trans_ichgtime(
 	ASSERT(tp);
 	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 
-	tv = current_time(inode);
+	tv = current_fs_time(inode->i_sb);
 
-	if (flags & XFS_ICHGTIME_MOD)
+	if ((flags & XFS_ICHGTIME_MOD) &&
+	    !timespec_equal(&inode->i_mtime, &tv)) {
 		inode->i_mtime = tv;
-	if (flags & XFS_ICHGTIME_CHG)
+		ip->i_d.di_mtime.t_sec = tv.tv_sec;
+		ip->i_d.di_mtime.t_nsec = tv.tv_nsec;
+	}
+	if ((flags & XFS_ICHGTIME_CHG) &&
+	    !timespec_equal(&inode->i_ctime, &tv)) {
 		inode->i_ctime = tv;
+		ip->i_d.di_ctime.t_sec = tv.tv_sec;
+		ip->i_d.di_ctime.t_nsec = tv.tv_nsec;
+	}
 }
 
 /*
@@ -117,7 +125,7 @@ xfs_trans_log_inode(
 	 */
 	if (!(ip->i_itemp->ili_item.li_desc->lid_flags & XFS_LID_DIRTY) &&
 	    IS_I_VERSION(VFS_I(ip))) {
-		VFS_I(ip)->i_version++;
+		ip->i_d.di_changecount = ++VFS_I(ip)->i_version;
 		flags |= XFS_ILOG_CORE;
 	}
 
@@ -133,18 +141,4 @@ xfs_trans_log_inode(
 	 */
 	flags |= ip->i_itemp->ili_last_fields;
 	ip->i_itemp->ili_fields |= flags;
-}
-
-int
-xfs_trans_roll_inode(
-	struct xfs_trans	**tpp,
-	struct xfs_inode	*ip)
-{
-	int			error;
-
-	xfs_trans_log_inode(*tpp, ip, XFS_ILOG_CORE);
-	error = xfs_trans_roll(tpp);
-	if (!error)
-		xfs_trans_ijoin(*tpp, ip, 0);
-	return error;
 }

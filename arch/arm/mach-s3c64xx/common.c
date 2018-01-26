@@ -39,7 +39,6 @@
 #include <asm/system_misc.h>
 
 #include <mach/map.h>
-#include <mach/irqs.h>
 #include <mach/hardware.h>
 #include <mach/regs-gpio.h>
 #include <mach/gpio-samsung.h>
@@ -56,8 +55,7 @@
 #include "watchdog-reset.h"
 
 /* External clock frequency */
-static unsigned long xtal_f __ro_after_init = 12000000;
-static unsigned long xusbxti_f __ro_after_init = 48000000;
+static unsigned long xtal_f = 12000000, xusbxti_f = 48000000;
 
 void __init s3c64xx_set_xtal_freq(unsigned long freq)
 {
@@ -210,7 +208,7 @@ void __init s3c64xx_init_io(struct map_desc *mach_desc, int size)
 static __init int s3c64xx_dev_init(void)
 {
 	/* Not applicable when using DT. */
-	if (of_have_populated_dt() || !soc_is_s3c64xx())
+	if (of_have_populated_dt())
 		return 0;
 
 	subsys_system_register(&s3c64xx_subsys, NULL);
@@ -415,7 +413,7 @@ static int __init s3c64xx_init_irq_eint(void)
 	int irq;
 
 	/* On DT-enabled systems EINTs are handled by pinctrl-s3c64xx driver. */
-	if (of_have_populated_dt() || !soc_is_s3c64xx())
+	if (of_have_populated_dt())
 		return -ENODEV;
 
 	for (irq = IRQ_EINT(0); irq <= IRQ_EINT(27); irq++) {

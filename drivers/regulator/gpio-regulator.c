@@ -162,8 +162,6 @@ of_get_gpio_regulator_config(struct device *dev, struct device_node *np,
 	of_property_read_u32(np, "startup-delay-us", &config->startup_delay);
 
 	config->enable_gpio = of_get_named_gpio(np, "enable-gpio", 0);
-	if (config->enable_gpio < 0 && config->enable_gpio != -ENOENT)
-		return ERR_PTR(config->enable_gpio);
 
 	/* Fetch GPIOs. - optional property*/
 	ret = of_gpio_count(np);
@@ -190,11 +188,8 @@ of_get_gpio_regulator_config(struct device *dev, struct device_node *np,
 
 		for (i = 0; i < config->nr_gpios; i++) {
 			gpio = of_get_named_gpio(np, "gpios", i);
-			if (gpio < 0) {
-				if (gpio != -ENOENT)
-					return ERR_PTR(gpio);
+			if (gpio < 0)
 				break;
-			}
 			config->gpios[i].gpio = gpio;
 			if (proplen > 0) {
 				of_property_read_u32_index(np, "gpios-states",
@@ -288,10 +283,8 @@ static int gpio_regulator_probe(struct platform_device *pdev)
 		drvdata->nr_gpios = config->nr_gpios;
 		ret = gpio_request_array(drvdata->gpios, drvdata->nr_gpios);
 		if (ret) {
-			if (ret != -EPROBE_DEFER)
-				dev_err(&pdev->dev,
-					"Could not obtain regulator setting GPIOs: %d\n",
-					ret);
+			dev_err(&pdev->dev,
+			"Could not obtain regulator setting GPIOs: %d\n", ret);
 			goto err_memstate;
 		}
 	}

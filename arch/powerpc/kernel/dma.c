@@ -33,7 +33,7 @@ static u64 __maybe_unused get_pfn_limit(struct device *dev)
 	struct dev_archdata __maybe_unused *sd = &dev->archdata;
 
 #ifdef CONFIG_SWIOTLB
-	if (sd->max_direct_dma_addr && dev->dma_ops == &swiotlb_dma_ops)
+	if (sd->max_direct_dma_addr && sd->dma_ops == &swiotlb_dma_ops)
 		pfn = min_t(u64, pfn, sd->max_direct_dma_addr >> PAGE_SHIFT);
 #endif
 
@@ -64,7 +64,7 @@ static int dma_direct_dma_supported(struct device *dev, u64 mask)
 
 void *__dma_direct_alloc_coherent(struct device *dev, size_t size,
 				  dma_addr_t *dma_handle, gfp_t flag,
-				  unsigned long attrs)
+				  struct dma_attrs *attrs)
 {
 	void *ret;
 #ifdef CONFIG_NOT_COHERENT_CACHE
@@ -121,7 +121,7 @@ void *__dma_direct_alloc_coherent(struct device *dev, size_t size,
 
 void __dma_direct_free_coherent(struct device *dev, size_t size,
 				void *vaddr, dma_addr_t dma_handle,
-				unsigned long attrs)
+				struct dma_attrs *attrs)
 {
 #ifdef CONFIG_NOT_COHERENT_CACHE
 	__dma_free_coherent(size, vaddr);
@@ -132,7 +132,7 @@ void __dma_direct_free_coherent(struct device *dev, size_t size,
 
 static void *dma_direct_alloc_coherent(struct device *dev, size_t size,
 				       dma_addr_t *dma_handle, gfp_t flag,
-				       unsigned long attrs)
+				       struct dma_attrs *attrs)
 {
 	struct iommu_table *iommu;
 
@@ -156,7 +156,7 @@ static void *dma_direct_alloc_coherent(struct device *dev, size_t size,
 
 static void dma_direct_free_coherent(struct device *dev, size_t size,
 				     void *vaddr, dma_addr_t dma_handle,
-				     unsigned long attrs)
+				     struct dma_attrs *attrs)
 {
 	struct iommu_table *iommu;
 
@@ -177,7 +177,7 @@ static void dma_direct_free_coherent(struct device *dev, size_t size,
 
 int dma_direct_mmap_coherent(struct device *dev, struct vm_area_struct *vma,
 			     void *cpu_addr, dma_addr_t handle, size_t size,
-			     unsigned long attrs)
+			     struct dma_attrs *attrs)
 {
 	unsigned long pfn;
 
@@ -195,7 +195,7 @@ int dma_direct_mmap_coherent(struct device *dev, struct vm_area_struct *vma,
 
 static int dma_direct_map_sg(struct device *dev, struct scatterlist *sgl,
 			     int nents, enum dma_data_direction direction,
-			     unsigned long attrs)
+			     struct dma_attrs *attrs)
 {
 	struct scatterlist *sg;
 	int i;
@@ -203,10 +203,6 @@ static int dma_direct_map_sg(struct device *dev, struct scatterlist *sgl,
 	for_each_sg(sgl, sg, nents, i) {
 		sg->dma_address = sg_phys(sg) + get_dma_offset(dev);
 		sg->dma_length = sg->length;
-
-		if (attrs & DMA_ATTR_SKIP_CPU_SYNC)
-			continue;
-
 		__dma_sync_page(sg_page(sg), sg->offset, sg->length, direction);
 	}
 
@@ -215,7 +211,7 @@ static int dma_direct_map_sg(struct device *dev, struct scatterlist *sgl,
 
 static void dma_direct_unmap_sg(struct device *dev, struct scatterlist *sg,
 				int nents, enum dma_data_direction direction,
-				unsigned long attrs)
+				struct dma_attrs *attrs)
 {
 }
 
@@ -236,13 +232,10 @@ static inline dma_addr_t dma_direct_map_page(struct device *dev,
 					     unsigned long offset,
 					     size_t size,
 					     enum dma_data_direction dir,
-					     unsigned long attrs)
+					     struct dma_attrs *attrs)
 {
 	BUG_ON(dir == DMA_NONE);
-
-	if (!(attrs & DMA_ATTR_SKIP_CPU_SYNC))
-		__dma_sync_page(page, offset, size, dir);
-
+	__dma_sync_page(page, offset, size, dir);
 	return page_to_phys(page) + offset + get_dma_offset(dev);
 }
 
@@ -250,7 +243,7 @@ static inline void dma_direct_unmap_page(struct device *dev,
 					 dma_addr_t dma_address,
 					 size_t size,
 					 enum dma_data_direction direction,
-					 unsigned long attrs)
+					 struct dma_attrs *attrs)
 {
 }
 
@@ -274,7 +267,7 @@ static inline void dma_direct_sync_single(struct device *dev,
 }
 #endif
 
-const struct dma_map_ops dma_direct_ops = {
+struct dma_map_ops dma_direct_ops = {
 	.alloc				= dma_direct_alloc_coherent,
 	.free				= dma_direct_free_coherent,
 	.mmap				= dma_direct_mmap_coherent,
@@ -314,6 +307,18 @@ EXPORT_SYMBOL(dma_set_coherent_mask);
 
 #define PREALLOC_DMA_DEBUG_ENTRIES (1 << 16)
 
+int __dma_set_mask(struct device *dev, u64 dma_mask)
+{
+	struct dma_map_ops *dma_ops = get_dma_ops(dev);
+
+	if ((dma_ops != NULL) && (dma_ops->set_dma_mask != NULL))
+		return dma_ops->set_dma_mask(dev, dma_mask);
+	if (!dev->dma_mask || !dma_supported(dev, dma_mask))
+		return -EIO;
+	*dev->dma_mask = dma_mask;
+	return 0;
+}
+
 int dma_set_mask(struct device *dev, u64 dma_mask)
 {
 	if (ppc_md.dma_set_mask)
@@ -326,16 +331,13 @@ int dma_set_mask(struct device *dev, u64 dma_mask)
 			return phb->controller_ops.dma_set_mask(pdev, dma_mask);
 	}
 
-	if (!dev->dma_mask || !dma_supported(dev, dma_mask))
-		return -EIO;
-	*dev->dma_mask = dma_mask;
-	return 0;
+	return __dma_set_mask(dev, dma_mask);
 }
 EXPORT_SYMBOL(dma_set_mask);
 
 u64 __dma_get_required_mask(struct device *dev)
 {
-	const struct dma_map_ops *dma_ops = get_dma_ops(dev);
+	struct dma_map_ops *dma_ops = get_dma_ops(dev);
 
 	if (unlikely(dma_ops == NULL))
 		return 0;

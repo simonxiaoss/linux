@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /* IP Virtual Server
  * data structure and functionality definitions
  */
@@ -13,8 +12,6 @@
 #include <linux/list.h>                 /* for struct list_head */
 #include <linux/spinlock.h>             /* for struct rwlock_t */
 #include <linux/atomic.h>               /* for struct atomic_t */
-#include <linux/refcount.h>             /* for struct refcount_t */
-
 #include <linux/compiler.h>
 #include <linux/timer.h>
 #include <linux/bug.h>
@@ -528,7 +525,7 @@ struct ip_vs_conn {
 	struct netns_ipvs	*ipvs;
 
 	/* counter and timer */
-	refcount_t		refcnt;		/* reference count */
+	atomic_t		refcnt;		/* reference count */
 	struct timer_list	timer;		/* Expiration timer */
 	volatile unsigned long	timeout;	/* timeout */
 
@@ -670,7 +667,7 @@ struct ip_vs_dest {
 	atomic_t		conn_flags;	/* flags to copy to conn */
 	atomic_t		weight;		/* server weight */
 
-	refcount_t		refcnt;		/* reference counter */
+	atomic_t		refcnt;		/* reference counter */
 	struct ip_vs_stats      stats;          /* statistics */
 	unsigned long		idle_start;	/* start time, jiffies */
 
@@ -734,12 +731,6 @@ struct ip_vs_pe {
 	u32 (*hashkey_raw)(const struct ip_vs_conn_param *p, u32 initval,
 			   bool inverse);
 	int (*show_pe_data)(const struct ip_vs_conn *cp, char *buf);
-	/* create connections for real-server outgoing packets */
-	struct ip_vs_conn* (*conn_out)(struct ip_vs_service *svc,
-				       struct ip_vs_dest *dest,
-				       struct sk_buff *skb,
-				       const struct ip_vs_iphdr *iph,
-				       __be16 dport, __be16 cport);
 };
 
 /* The application module object (a.k.a. app incarnation) */
@@ -883,7 +874,6 @@ struct netns_ipvs {
 	/* Service counters */
 	atomic_t		ftpsvc_counter;
 	atomic_t		nullsvc_counter;
-	atomic_t		conn_out_counter;
 
 #ifdef CONFIG_SYSCTL
 	/* 1/rate drop and drop-entry variables */
@@ -984,12 +974,12 @@ static inline int sysctl_sync_threshold(struct netns_ipvs *ipvs)
 
 static inline int sysctl_sync_period(struct netns_ipvs *ipvs)
 {
-	return READ_ONCE(ipvs->sysctl_sync_threshold[1]);
+	return ACCESS_ONCE(ipvs->sysctl_sync_threshold[1]);
 }
 
 static inline unsigned int sysctl_sync_refresh_period(struct netns_ipvs *ipvs)
 {
-	return READ_ONCE(ipvs->sysctl_sync_refresh_period);
+	return ACCESS_ONCE(ipvs->sysctl_sync_refresh_period);
 }
 
 static inline int sysctl_sync_retries(struct netns_ipvs *ipvs)
@@ -1014,7 +1004,7 @@ static inline int sysctl_sloppy_sctp(struct netns_ipvs *ipvs)
 
 static inline int sysctl_sync_ports(struct netns_ipvs *ipvs)
 {
-	return READ_ONCE(ipvs->sysctl_sync_ports);
+	return ACCESS_ONCE(ipvs->sysctl_sync_ports);
 }
 
 static inline int sysctl_sync_persist_mode(struct netns_ipvs *ipvs)
@@ -1157,12 +1147,6 @@ static inline int sysctl_cache_bypass(struct netns_ipvs *ipvs)
  */
 const char *ip_vs_proto_name(unsigned int proto);
 void ip_vs_init_hash_table(struct list_head *table, int rows);
-struct ip_vs_conn *ip_vs_new_conn_out(struct ip_vs_service *svc,
-				      struct ip_vs_dest *dest,
-				      struct sk_buff *skb,
-				      const struct ip_vs_iphdr *iph,
-				      __be16 dport,
-				      __be16 cport);
 #define IP_VS_INIT_HASH_TABLE(t) ip_vs_init_hash_table((t), ARRAY_SIZE((t)))
 
 #define IP_VS_APP_TYPE_FTP	1
@@ -1214,14 +1198,14 @@ struct ip_vs_conn * ip_vs_conn_out_get_proto(struct netns_ipvs *ipvs, int af,
  */
 static inline bool __ip_vs_conn_get(struct ip_vs_conn *cp)
 {
-	return refcount_inc_not_zero(&cp->refcnt);
+	return atomic_inc_not_zero(&cp->refcnt);
 }
 
 /* put back the conn without restarting its timer */
 static inline void __ip_vs_conn_put(struct ip_vs_conn *cp)
 {
 	smp_mb__before_atomic();
-	refcount_dec(&cp->refcnt);
+	atomic_dec(&cp->refcnt);
 }
 void ip_vs_conn_put(struct ip_vs_conn *cp);
 void ip_vs_conn_fill_cport(struct ip_vs_conn *cp, __be16 cport);
@@ -1235,7 +1219,7 @@ void ip_vs_conn_expire_now(struct ip_vs_conn *cp);
 const char *ip_vs_state_name(__u16 proto, int state);
 
 void ip_vs_tcp_conn_listen(struct ip_vs_conn *cp);
-int ip_vs_check_template(struct ip_vs_conn *ct, struct ip_vs_dest *cdest);
+int ip_vs_check_template(struct ip_vs_conn *ct);
 void ip_vs_random_dropentry(struct netns_ipvs *ipvs);
 int ip_vs_conn_init(void);
 void ip_vs_conn_cleanup(void);
@@ -1350,6 +1334,8 @@ int ip_vs_protocol_init(void);
 void ip_vs_protocol_cleanup(void);
 void ip_vs_protocol_timeout_change(struct netns_ipvs *ipvs, int flags);
 int *ip_vs_create_timeout_table(int *table, int size);
+int ip_vs_set_state_timeout(int *table, int num, const char *const *names,
+			    const char *name, int to);
 void ip_vs_tcpudp_debug_packet(int af, struct ip_vs_protocol *pp,
 			       const struct sk_buff *skb, int offset,
 			       const char *msg);
@@ -1392,10 +1378,6 @@ ip_vs_service_find(struct netns_ipvs *ipvs, int af, __u32 fwmark, __u16 protocol
 bool ip_vs_has_real_service(struct netns_ipvs *ipvs, int af, __u16 protocol,
 			    const union nf_inet_addr *daddr, __be16 dport);
 
-struct ip_vs_dest *
-ip_vs_find_real_service(struct netns_ipvs *ipvs, int af, __u16 protocol,
-			const union nf_inet_addr *daddr, __be16 dport);
-
 int ip_vs_use_count_inc(void);
 void ip_vs_use_count_dec(void);
 int ip_vs_register_nl_ioctl(void);
@@ -1411,18 +1393,18 @@ void ip_vs_try_bind_dest(struct ip_vs_conn *cp);
 
 static inline void ip_vs_dest_hold(struct ip_vs_dest *dest)
 {
-	refcount_inc(&dest->refcnt);
+	atomic_inc(&dest->refcnt);
 }
 
 static inline void ip_vs_dest_put(struct ip_vs_dest *dest)
 {
 	smp_mb__before_atomic();
-	refcount_dec(&dest->refcnt);
+	atomic_dec(&dest->refcnt);
 }
 
 static inline void ip_vs_dest_put_and_free(struct ip_vs_dest *dest)
 {
-	if (refcount_dec_and_test(&dest->refcnt))
+	if (atomic_dec_return(&dest->refcnt) < 0)
 		kfree(dest);
 }
 
@@ -1554,9 +1536,11 @@ static inline void ip_vs_notrack(struct sk_buff *skb)
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct = nf_ct_get(skb, &ctinfo);
 
-	if (ct) {
-		nf_conntrack_put(&ct->ct_general);
-		nf_ct_set(skb, NULL, IP_CT_UNTRACKED);
+	if (!ct || !nf_ct_is_untracked(ct)) {
+		nf_conntrack_put(skb->nfct);
+		skb->nfct = &nf_ct_untracked_get()->ct_general;
+		skb->nfctinfo = IP_CT_NEW;
+		nf_conntrack_get(skb->nfct);
 	}
 #endif
 }
@@ -1615,7 +1599,7 @@ static inline bool ip_vs_conn_uses_conntrack(struct ip_vs_conn *cp,
 	if (!(cp->flags & IP_VS_CONN_F_NFCT))
 		return false;
 	ct = nf_ct_get(skb, &ctinfo);
-	if (ct)
+	if (ct && !nf_ct_is_untracked(ct))
 		return true;
 #endif
 	return false;

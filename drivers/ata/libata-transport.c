@@ -493,13 +493,12 @@ struct ata_show_ering_arg {
 static int ata_show_ering(struct ata_ering_entry *ent, void *void_arg)
 {
 	struct ata_show_ering_arg* arg = void_arg;
-	u64 seconds;
-	u32 rem;
+	struct timespec time;
 
-	seconds = div_u64_rem(ent->timestamp, HZ, &rem);
+	jiffies_to_timespec(ent->timestamp,&time);
 	arg->written += sprintf(arg->buf + arg->written,
-			        "[%5llu.%09lu]", seconds,
-				rem * NSEC_PER_SEC / HZ);
+			       "[%5lu.%06lu]",
+			       time.tv_sec, time.tv_nsec);
 	arg->written += get_ata_err_names(ent->err_mask,
 					  arg->buf + arg->written);
 	return 0;
@@ -713,6 +712,7 @@ struct scsi_transport_template *ata_attach_transport(void)
 		return NULL;
 
 	i->t.eh_strategy_handler	= ata_scsi_error;
+	i->t.eh_timed_out		= ata_scsi_timed_out;
 	i->t.user_scan			= ata_scsi_user_scan;
 
 	i->t.host_attrs.ac.attrs = &i->port_attrs[0];

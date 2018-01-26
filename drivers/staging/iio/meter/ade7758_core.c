@@ -24,7 +24,9 @@
 #include "meter.h"
 #include "ade7758.h"
 
-int ade7758_spi_write_reg_8(struct device *dev, u8 reg_address, u8 val)
+int ade7758_spi_write_reg_8(struct device *dev,
+		u8 reg_address,
+		u8 val)
 {
 	int ret;
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
@@ -40,8 +42,9 @@ int ade7758_spi_write_reg_8(struct device *dev, u8 reg_address, u8 val)
 	return ret;
 }
 
-static int ade7758_spi_write_reg_16(struct device *dev, u8 reg_address,
-				    u16 value)
+static int ade7758_spi_write_reg_16(struct device *dev,
+		u8 reg_address,
+		u16 value)
 {
 	int ret;
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
@@ -65,8 +68,9 @@ static int ade7758_spi_write_reg_16(struct device *dev, u8 reg_address,
 	return ret;
 }
 
-static int ade7758_spi_write_reg_24(struct device *dev, u8 reg_address,
-				    u32 value)
+static int ade7758_spi_write_reg_24(struct device *dev,
+		u8 reg_address,
+		u32 value)
 {
 	int ret;
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
@@ -91,7 +95,9 @@ static int ade7758_spi_write_reg_24(struct device *dev, u8 reg_address,
 	return ret;
 }
 
-int ade7758_spi_read_reg_8(struct device *dev, u8 reg_address, u8 *val)
+int ade7758_spi_read_reg_8(struct device *dev,
+		u8 reg_address,
+		u8 *val)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct ade7758_state *st = iio_priv(indio_dev);
@@ -118,7 +124,7 @@ int ade7758_spi_read_reg_8(struct device *dev, u8 reg_address, u8 *val)
 	ret = spi_sync_transfer(st->us, xfers, ARRAY_SIZE(xfers));
 	if (ret) {
 		dev_err(&st->us->dev, "problem when reading 8 bit register 0x%02X",
-			reg_address);
+				reg_address);
 		goto error_ret;
 	}
 	*val = st->rx[0];
@@ -128,8 +134,9 @@ error_ret:
 	return ret;
 }
 
-static int ade7758_spi_read_reg_16(struct device *dev, u8 reg_address,
-				   u16 *val)
+static int ade7758_spi_read_reg_16(struct device *dev,
+		u8 reg_address,
+		u16 *val)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct ade7758_state *st = iio_priv(indio_dev);
@@ -149,6 +156,7 @@ static int ade7758_spi_read_reg_16(struct device *dev, u8 reg_address,
 		},
 	};
 
+
 	mutex_lock(&st->buf_lock);
 	st->tx[0] = ADE7758_READ_REG(reg_address);
 	st->tx[1] = 0;
@@ -157,7 +165,7 @@ static int ade7758_spi_read_reg_16(struct device *dev, u8 reg_address,
 	ret = spi_sync_transfer(st->us, xfers, ARRAY_SIZE(xfers));
 	if (ret) {
 		dev_err(&st->us->dev, "problem when reading 16 bit register 0x%02X",
-			reg_address);
+				reg_address);
 		goto error_ret;
 	}
 
@@ -168,8 +176,9 @@ error_ret:
 	return ret;
 }
 
-static int ade7758_spi_read_reg_24(struct device *dev, u8 reg_address,
-				   u32 *val)
+static int ade7758_spi_read_reg_24(struct device *dev,
+		u8 reg_address,
+		u32 *val)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct ade7758_state *st = iio_priv(indio_dev);
@@ -198,7 +207,7 @@ static int ade7758_spi_read_reg_24(struct device *dev, u8 reg_address,
 	ret = spi_sync_transfer(st->us, xfers, ARRAY_SIZE(xfers));
 	if (ret) {
 		dev_err(&st->us->dev, "problem when reading 24 bit register 0x%02X",
-			reg_address);
+				reg_address);
 		goto error_ret;
 	}
 	*val = (st->rx[0] << 16) | (st->rx[1] << 8) | st->rx[2];
@@ -209,7 +218,8 @@ error_ret:
 }
 
 static ssize_t ade7758_read_8bit(struct device *dev,
-				 struct device_attribute *attr, char *buf)
+		struct device_attribute *attr,
+		char *buf)
 {
 	int ret;
 	u8 val = 0;
@@ -223,7 +233,8 @@ static ssize_t ade7758_read_8bit(struct device *dev,
 }
 
 static ssize_t ade7758_read_16bit(struct device *dev,
-				  struct device_attribute *attr, char *buf)
+		struct device_attribute *attr,
+		char *buf)
 {
 	int ret;
 	u16 val = 0;
@@ -237,7 +248,8 @@ static ssize_t ade7758_read_16bit(struct device *dev,
 }
 
 static ssize_t ade7758_read_24bit(struct device *dev,
-				  struct device_attribute *attr, char *buf)
+		struct device_attribute *attr,
+		char *buf)
 {
 	int ret;
 	u32 val = 0;
@@ -251,8 +263,9 @@ static ssize_t ade7758_read_24bit(struct device *dev,
 }
 
 static ssize_t ade7758_write_8bit(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t len)
+		struct device_attribute *attr,
+		const char *buf,
+		size_t len)
 {
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
 	int ret;
@@ -268,8 +281,9 @@ error_ret:
 }
 
 static ssize_t ade7758_write_16bit(struct device *dev,
-				   struct device_attribute *attr,
-				   const char *buf, size_t len)
+		struct device_attribute *attr,
+		const char *buf,
+		size_t len)
 {
 	struct iio_dev_attr *this_attr = to_iio_dev_attr(attr);
 	int ret;
@@ -301,103 +315,103 @@ static int ade7758_reset(struct device *dev)
 	return ret;
 }
 
-static IIO_DEV_ATTR_VPEAK(0644,
+static IIO_DEV_ATTR_VPEAK(S_IWUSR | S_IRUGO,
 		ade7758_read_8bit,
 		ade7758_write_8bit,
 		ADE7758_VPEAK);
-static IIO_DEV_ATTR_IPEAK(0644,
+static IIO_DEV_ATTR_IPEAK(S_IWUSR | S_IRUGO,
 		ade7758_read_8bit,
 		ade7758_write_8bit,
 		ADE7758_VPEAK);
-static IIO_DEV_ATTR_APHCAL(0644,
+static IIO_DEV_ATTR_APHCAL(S_IWUSR | S_IRUGO,
 		ade7758_read_8bit,
 		ade7758_write_8bit,
 		ADE7758_APHCAL);
-static IIO_DEV_ATTR_BPHCAL(0644,
+static IIO_DEV_ATTR_BPHCAL(S_IWUSR | S_IRUGO,
 		ade7758_read_8bit,
 		ade7758_write_8bit,
 		ADE7758_BPHCAL);
-static IIO_DEV_ATTR_CPHCAL(0644,
+static IIO_DEV_ATTR_CPHCAL(S_IWUSR | S_IRUGO,
 		ade7758_read_8bit,
 		ade7758_write_8bit,
 		ADE7758_CPHCAL);
-static IIO_DEV_ATTR_WDIV(0644,
+static IIO_DEV_ATTR_WDIV(S_IWUSR | S_IRUGO,
 		ade7758_read_8bit,
 		ade7758_write_8bit,
 		ADE7758_WDIV);
-static IIO_DEV_ATTR_VADIV(0644,
+static IIO_DEV_ATTR_VADIV(S_IWUSR | S_IRUGO,
 		ade7758_read_8bit,
 		ade7758_write_8bit,
 		ADE7758_VADIV);
-static IIO_DEV_ATTR_AIRMS(0444,
+static IIO_DEV_ATTR_AIRMS(S_IRUGO,
 		ade7758_read_24bit,
 		NULL,
 		ADE7758_AIRMS);
-static IIO_DEV_ATTR_BIRMS(0444,
+static IIO_DEV_ATTR_BIRMS(S_IRUGO,
 		ade7758_read_24bit,
 		NULL,
 		ADE7758_BIRMS);
-static IIO_DEV_ATTR_CIRMS(0444,
+static IIO_DEV_ATTR_CIRMS(S_IRUGO,
 		ade7758_read_24bit,
 		NULL,
 		ADE7758_CIRMS);
-static IIO_DEV_ATTR_AVRMS(0444,
+static IIO_DEV_ATTR_AVRMS(S_IRUGO,
 		ade7758_read_24bit,
 		NULL,
 		ADE7758_AVRMS);
-static IIO_DEV_ATTR_BVRMS(0444,
+static IIO_DEV_ATTR_BVRMS(S_IRUGO,
 		ade7758_read_24bit,
 		NULL,
 		ADE7758_BVRMS);
-static IIO_DEV_ATTR_CVRMS(0444,
+static IIO_DEV_ATTR_CVRMS(S_IRUGO,
 		ade7758_read_24bit,
 		NULL,
 		ADE7758_CVRMS);
-static IIO_DEV_ATTR_AIRMSOS(0644,
+static IIO_DEV_ATTR_AIRMSOS(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_AIRMSOS);
-static IIO_DEV_ATTR_BIRMSOS(0644,
+static IIO_DEV_ATTR_BIRMSOS(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_BIRMSOS);
-static IIO_DEV_ATTR_CIRMSOS(0644,
+static IIO_DEV_ATTR_CIRMSOS(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_CIRMSOS);
-static IIO_DEV_ATTR_AVRMSOS(0644,
+static IIO_DEV_ATTR_AVRMSOS(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_AVRMSOS);
-static IIO_DEV_ATTR_BVRMSOS(0644,
+static IIO_DEV_ATTR_BVRMSOS(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_BVRMSOS);
-static IIO_DEV_ATTR_CVRMSOS(0644,
+static IIO_DEV_ATTR_CVRMSOS(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_CVRMSOS);
-static IIO_DEV_ATTR_AIGAIN(0644,
+static IIO_DEV_ATTR_AIGAIN(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_AIGAIN);
-static IIO_DEV_ATTR_BIGAIN(0644,
+static IIO_DEV_ATTR_BIGAIN(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_BIGAIN);
-static IIO_DEV_ATTR_CIGAIN(0644,
+static IIO_DEV_ATTR_CIGAIN(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_CIGAIN);
-static IIO_DEV_ATTR_AVRMSGAIN(0644,
+static IIO_DEV_ATTR_AVRMSGAIN(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_AVRMSGAIN);
-static IIO_DEV_ATTR_BVRMSGAIN(0644,
+static IIO_DEV_ATTR_BVRMSGAIN(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_BVRMSGAIN);
-static IIO_DEV_ATTR_CVRMSGAIN(0644,
+static IIO_DEV_ATTR_CVRMSGAIN(S_IWUSR | S_IRUGO,
 		ade7758_read_16bit,
 		ade7758_write_16bit,
 		ADE7758_CVRMSGAIN);
@@ -409,17 +423,19 @@ int ade7758_set_irq(struct device *dev, bool enable)
 
 	ret = ade7758_spi_read_reg_24(dev, ADE7758_MASK, &irqen);
 	if (ret)
-		return ret;
+		goto error_ret;
 
 	if (enable)
 		irqen |= BIT(16); /* Enables an interrupt when a data is
-				   * present in the waveform register
-				   */
+				     present in the waveform register */
 	else
 		irqen &= ~BIT(16);
 
 	ret = ade7758_spi_write_reg_24(dev, ADE7758_MASK, irqen);
+	if (ret)
+		goto error_ret;
 
+error_ret:
 	return ret;
 }
 
@@ -459,31 +475,47 @@ static int ade7758_initial_setup(struct iio_dev *indio_dev)
 	}
 
 	ade7758_reset(dev);
-	usleep_range(ADE7758_STARTUP_DELAY, ADE7758_STARTUP_DELAY + 100);
+	msleep(ADE7758_STARTUP_DELAY);
 
 err_ret:
 	return ret;
 }
 
-static int ade7758_read_samp_freq(struct device *dev, int *val)
+static ssize_t ade7758_read_frequency(struct device *dev,
+		struct device_attribute *attr,
+		char *buf)
 {
 	int ret;
 	u8 t;
+	int sps;
 
-	ret = ade7758_spi_read_reg_8(dev, ADE7758_WAVMODE, &t);
+	ret = ade7758_spi_read_reg_8(dev,
+			ADE7758_WAVMODE,
+			&t);
 	if (ret)
 		return ret;
 
 	t = (t >> 5) & 0x3;
-	*val = 26040 / (1 << t);
+	sps = 26040 / (1 << t);
 
-	return 0;
+	return sprintf(buf, "%d SPS\n", sps);
 }
 
-static int ade7758_write_samp_freq(struct device *dev, int val)
+static ssize_t ade7758_write_frequency(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf,
+		size_t len)
 {
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	u16 val;
 	int ret;
 	u8 reg, t;
+
+	ret = kstrtou16(buf, 10, &val);
+	if (ret)
+		return ret;
+
+	mutex_lock(&indio_dev->mlock);
 
 	switch (val) {
 	case 26040:
@@ -503,59 +535,23 @@ static int ade7758_write_samp_freq(struct device *dev, int val)
 		goto out;
 	}
 
-	ret = ade7758_spi_read_reg_8(dev, ADE7758_WAVMODE, &reg);
+	ret = ade7758_spi_read_reg_8(dev,
+			ADE7758_WAVMODE,
+			&reg);
 	if (ret)
 		goto out;
 
 	reg &= ~(5 << 3);
 	reg |= t << 5;
 
-	ret = ade7758_spi_write_reg_8(dev, ADE7758_WAVMODE, reg);
+	ret = ade7758_spi_write_reg_8(dev,
+			ADE7758_WAVMODE,
+			reg);
 
 out:
-	return ret;
-}
+	mutex_unlock(&indio_dev->mlock);
 
-static int ade7758_read_raw(struct iio_dev *indio_dev,
-			    struct iio_chan_spec const *chan,
-			    int *val,
-			    int *val2,
-			    long mask)
-{
-	int ret;
-
-	switch (mask) {
-	case IIO_CHAN_INFO_SAMP_FREQ:
-		mutex_lock(&indio_dev->mlock);
-		ret = ade7758_read_samp_freq(&indio_dev->dev, val);
-		mutex_unlock(&indio_dev->mlock);
-		return ret;
-	default:
-		return -EINVAL;
-	}
-
-	return ret;
-}
-
-static int ade7758_write_raw(struct iio_dev *indio_dev,
-			     struct iio_chan_spec const *chan,
-			     int val, int val2, long mask)
-{
-	int ret;
-
-	switch (mask) {
-	case IIO_CHAN_INFO_SAMP_FREQ:
-		if (val2)
-			return -EINVAL;
-		mutex_lock(&indio_dev->mlock);
-		ret = ade7758_write_samp_freq(&indio_dev->dev, val);
-		mutex_unlock(&indio_dev->mlock);
-		return ret;
-	default:
-		return -EINVAL;
-	}
-
-	return ret;
+	return ret ? ret : len;
 }
 
 static IIO_DEV_ATTR_TEMP_RAW(ade7758_read_8bit);
@@ -581,12 +577,17 @@ static IIO_DEV_ATTR_BVAHR(ade7758_read_16bit,
 static IIO_DEV_ATTR_CVAHR(ade7758_read_16bit,
 		ADE7758_CVAHR);
 
+static IIO_DEV_ATTR_SAMP_FREQ(S_IWUSR | S_IRUGO,
+		ade7758_read_frequency,
+		ade7758_write_frequency);
+
 static IIO_CONST_ATTR_SAMP_FREQ_AVAIL("26040 13020 6510 3255");
 
 static struct attribute *ade7758_attributes[] = {
 	&iio_dev_attr_in_temp_raw.dev_attr.attr,
 	&iio_const_attr_in_temp_offset.dev_attr.attr,
 	&iio_const_attr_in_temp_scale.dev_attr.attr,
+	&iio_dev_attr_sampling_frequency.dev_attr.attr,
 	&iio_const_attr_sampling_frequency_available.dev_attr.attr,
 	&iio_dev_attr_awatthr.dev_attr.attr,
 	&iio_dev_attr_bwatthr.dev_attr.attr,
@@ -634,7 +635,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.type = IIO_VOLTAGE,
 		.indexed = 1,
 		.channel = 0,
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_A, AD7758_VOLTAGE),
 		.scan_index = 0,
 		.scan_type = {
@@ -646,7 +646,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.type = IIO_CURRENT,
 		.indexed = 1,
 		.channel = 0,
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_A, AD7758_CURRENT),
 		.scan_index = 1,
 		.scan_type = {
@@ -659,7 +658,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.indexed = 1,
 		.channel = 0,
 		.extend_name = "apparent",
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_A, AD7758_APP_PWR),
 		.scan_index = 2,
 		.scan_type = {
@@ -672,7 +670,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.indexed = 1,
 		.channel = 0,
 		.extend_name = "active",
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_A, AD7758_ACT_PWR),
 		.scan_index = 3,
 		.scan_type = {
@@ -685,7 +682,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.indexed = 1,
 		.channel = 0,
 		.extend_name = "reactive",
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_A, AD7758_REACT_PWR),
 		.scan_index = 4,
 		.scan_type = {
@@ -697,7 +693,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.type = IIO_VOLTAGE,
 		.indexed = 1,
 		.channel = 1,
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_B, AD7758_VOLTAGE),
 		.scan_index = 5,
 		.scan_type = {
@@ -709,7 +704,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.type = IIO_CURRENT,
 		.indexed = 1,
 		.channel = 1,
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_B, AD7758_CURRENT),
 		.scan_index = 6,
 		.scan_type = {
@@ -722,7 +716,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.indexed = 1,
 		.channel = 1,
 		.extend_name = "apparent",
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_B, AD7758_APP_PWR),
 		.scan_index = 7,
 		.scan_type = {
@@ -735,7 +728,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.indexed = 1,
 		.channel = 1,
 		.extend_name = "active",
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_B, AD7758_ACT_PWR),
 		.scan_index = 8,
 		.scan_type = {
@@ -748,7 +740,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.indexed = 1,
 		.channel = 1,
 		.extend_name = "reactive",
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_B, AD7758_REACT_PWR),
 		.scan_index = 9,
 		.scan_type = {
@@ -760,7 +751,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.type = IIO_VOLTAGE,
 		.indexed = 1,
 		.channel = 2,
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_C, AD7758_VOLTAGE),
 		.scan_index = 10,
 		.scan_type = {
@@ -772,7 +762,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.type = IIO_CURRENT,
 		.indexed = 1,
 		.channel = 2,
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_C, AD7758_CURRENT),
 		.scan_index = 11,
 		.scan_type = {
@@ -785,7 +774,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.indexed = 1,
 		.channel = 2,
 		.extend_name = "apparent",
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_C, AD7758_APP_PWR),
 		.scan_index = 12,
 		.scan_type = {
@@ -798,7 +786,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.indexed = 1,
 		.channel = 2,
 		.extend_name = "active",
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_C, AD7758_ACT_PWR),
 		.scan_index = 13,
 		.scan_type = {
@@ -811,7 +798,6 @@ static const struct iio_chan_spec ade7758_channels[] = {
 		.indexed = 1,
 		.channel = 2,
 		.extend_name = "reactive",
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.address = AD7758_WT(AD7758_PHASE_C, AD7758_REACT_PWR),
 		.scan_index = 14,
 		.scan_type = {
@@ -825,8 +811,7 @@ static const struct iio_chan_spec ade7758_channels[] = {
 
 static const struct iio_info ade7758_info = {
 	.attrs = &ade7758_attribute_group,
-	.read_raw = &ade7758_read_raw,
-	.write_raw = &ade7758_write_raw,
+	.driver_module = THIS_MODULE,
 };
 
 static int ade7758_probe(struct spi_device *spi)

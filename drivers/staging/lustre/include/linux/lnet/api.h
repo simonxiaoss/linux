@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -45,12 +44,11 @@
  * @{
  */
 
-#include <uapi/linux/lnet/lnet-types.h>
+#include "../lnet/types.h"
 
 /** \defgroup lnet_init_fini Initialization and cleanup
  * The LNet must be properly initialized before any LNet calls can be made.
- * @{
- */
+ * @{ */
 int LNetNIInit(lnet_pid_t requested_pid);
 int LNetNIFini(void);
 /** @} lnet_init_fini */
@@ -73,10 +71,10 @@ int LNetNIFini(void);
  * it's an entry in the portals table of a process.
  *
  * \see LNetMEAttach
- * @{
- */
-int LNetGetId(unsigned int index, struct lnet_process_id *id);
+ * @{ */
+int LNetGetId(unsigned int index, lnet_process_id_t *id);
 int LNetDist(lnet_nid_t nid, lnet_nid_t *srcnid, __u32 *order);
+void LNetSnprintHandle(char *str, int str_len, lnet_handle_any_t handle);
 
 /** @} lnet_addr */
 
@@ -91,25 +89,24 @@ int LNetDist(lnet_nid_t nid, lnet_nid_t *srcnid, __u32 *order);
  * incoming requests based on process ID or the match bits provided in the
  * request. MEs can be dynamically inserted into a match list by LNetMEAttach()
  * and LNetMEInsert(), and removed from its list by LNetMEUnlink().
- * @{
- */
+ * @{ */
 int LNetMEAttach(unsigned int      portal,
-		 struct lnet_process_id match_id_in,
+		 lnet_process_id_t match_id_in,
 		 __u64		   match_bits_in,
 		 __u64		   ignore_bits_in,
-		 enum lnet_unlink unlink_in,
-		 enum lnet_ins_pos pos_in,
-		 struct lnet_handle_me *handle_out);
+		 lnet_unlink_t     unlink_in,
+		 lnet_ins_pos_t    pos_in,
+		 lnet_handle_me_t *handle_out);
 
-int LNetMEInsert(struct lnet_handle_me current_in,
-		 struct lnet_process_id match_id_in,
+int LNetMEInsert(lnet_handle_me_t  current_in,
+		 lnet_process_id_t match_id_in,
 		 __u64		   match_bits_in,
 		 __u64		   ignore_bits_in,
-		 enum lnet_unlink unlink_in,
-		 enum lnet_ins_pos position_in,
-		 struct lnet_handle_me *handle_out);
+		 lnet_unlink_t     unlink_in,
+		 lnet_ins_pos_t    position_in,
+		 lnet_handle_me_t *handle_out);
 
-int LNetMEUnlink(struct lnet_handle_me current_in);
+int LNetMEUnlink(lnet_handle_me_t current_in);
 /** @} lnet_me */
 
 /** \defgroup lnet_md Memory descriptors
@@ -123,18 +120,17 @@ int LNetMEUnlink(struct lnet_handle_me current_in);
  * The LNet API provides two operations to create MDs: LNetMDAttach()
  * and LNetMDBind(); one operation to unlink and release the resources
  * associated with a MD: LNetMDUnlink().
- * @{
- */
-int LNetMDAttach(struct lnet_handle_me current_in,
-		 struct lnet_md md_in,
-		 enum lnet_unlink unlink_in,
-		 struct lnet_handle_md *md_handle_out);
+ * @{ */
+int LNetMDAttach(lnet_handle_me_t  current_in,
+		 lnet_md_t	   md_in,
+		 lnet_unlink_t     unlink_in,
+		 lnet_handle_md_t *handle_out);
 
-int LNetMDBind(struct lnet_md md_in,
-	       enum lnet_unlink unlink_in,
-	       struct lnet_handle_md *md_handle_out);
+int LNetMDBind(lnet_md_t	   md_in,
+	       lnet_unlink_t       unlink_in,
+	       lnet_handle_md_t   *handle_out);
 
-int LNetMDUnlink(struct lnet_handle_md md_in);
+int LNetMDUnlink(lnet_handle_md_t md_in);
 /** @} lnet_md */
 
 /** \defgroup lnet_eq Events and event queues
@@ -147,9 +143,9 @@ int LNetMDUnlink(struct lnet_handle_md md_in);
  * associated with it. If an event handler exists, it will be run for each
  * event that is deposited into the EQ.
  *
- * In addition to the lnet_handle_eq, the LNet API defines two types
- * associated with events: The ::lnet_event_kind defines the kinds of events
- * that can be stored in an EQ. The lnet_event defines a structure that
+ * In addition to the lnet_handle_eq_t, the LNet API defines two types
+ * associated with events: The ::lnet_event_kind_t defines the kinds of events
+ * that can be stored in an EQ. The lnet_event_t defines a structure that
  * holds the information about with an event.
  *
  * There are five functions for dealing with EQs: LNetEQAlloc() is used to
@@ -158,18 +154,23 @@ int LNetMDUnlink(struct lnet_handle_md md_in);
  * event from an EQ, and LNetEQWait() can be used to block a process until
  * an EQ has at least one event. LNetEQPoll() can be used to test or wait
  * on multiple EQs.
- * @{
- */
+ * @{ */
 int LNetEQAlloc(unsigned int       count_in,
 		lnet_eq_handler_t  handler,
-		struct lnet_handle_eq *handle_out);
+		lnet_handle_eq_t  *handle_out);
 
-int LNetEQFree(struct lnet_handle_eq eventq_in);
+int LNetEQFree(lnet_handle_eq_t eventq_in);
 
-int LNetEQPoll(struct lnet_handle_eq *eventqs_in,
+int LNetEQGet(lnet_handle_eq_t  eventq_in,
+	      lnet_event_t     *event_out);
+
+int LNetEQWait(lnet_handle_eq_t  eventq_in,
+	       lnet_event_t     *event_out);
+
+int LNetEQPoll(lnet_handle_eq_t *eventqs_in,
 	       int		 neq_in,
 	       int		 timeout_ms,
-	       struct lnet_event *event_out,
+	       lnet_event_t     *event_out,
 	       int		*which_eq_out);
 /** @} lnet_eq */
 
@@ -177,20 +178,19 @@ int LNetEQPoll(struct lnet_handle_eq *eventqs_in,
  *
  * The LNet API provides two data movement operations: LNetPut()
  * and LNetGet().
- * @{
- */
+ * @{ */
 int LNetPut(lnet_nid_t	      self,
-	    struct lnet_handle_md md_in,
-	    enum lnet_ack_req ack_req_in,
-	    struct lnet_process_id target_in,
+	    lnet_handle_md_t  md_in,
+	    lnet_ack_req_t    ack_req_in,
+	    lnet_process_id_t target_in,
 	    unsigned int      portal_in,
 	    __u64	      match_bits_in,
 	    unsigned int      offset_in,
 	    __u64	      hdr_data_in);
 
 int LNetGet(lnet_nid_t	      self,
-	    struct lnet_handle_md md_in,
-	    struct lnet_process_id target_in,
+	    lnet_handle_md_t  md_in,
+	    lnet_process_id_t target_in,
 	    unsigned int      portal_in,
 	    __u64	      match_bits_in,
 	    unsigned int      offset_in);
@@ -198,12 +198,11 @@ int LNetGet(lnet_nid_t	      self,
 
 /** \defgroup lnet_misc Miscellaneous operations.
  * Miscellaneous operations.
- * @{
- */
+ * @{ */
+
 int LNetSetLazyPortal(int portal);
 int LNetClearLazyPortal(int portal);
 int LNetCtl(unsigned int cmd, void *arg);
-void LNetDebugPeer(struct lnet_process_id id);
 
 /** @} lnet_misc */
 

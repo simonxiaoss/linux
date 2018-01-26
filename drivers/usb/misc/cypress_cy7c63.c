@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
 * cypress_cy7c63.c
 *
@@ -24,6 +23,10 @@
 *
 *	For up-to-date information please visit:
 *	http://www.obock.de/kernel/cypress
+*
+*	This program is free software; you can redistribute it and/or
+*	modify it under the terms of the GNU General Public License as
+*	published by the Free Software Foundation, version 2.
 */
 
 #include <linux/module.h>
@@ -76,6 +79,7 @@ static int vendor_command(struct cypress *dev, unsigned char request,
 	/* allocate some memory for the i/o buffer*/
 	iobuf = kzalloc(CYPRESS_MAX_REQSIZE, GFP_KERNEL);
 	if (!iobuf) {
+		dev_err(&dev->udev->dev, "Out of memory!\n");
 		retval = -ENOMEM;
 		goto error;
 	}
@@ -204,8 +208,10 @@ static int cypress_probe(struct usb_interface *interface,
 
 	/* allocate memory for our device state and initialize it */
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
-	if (!dev)
+	if (dev == NULL) {
+		dev_err(&interface->dev, "Out of memory!\n");
 		goto error_mem;
+	}
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 

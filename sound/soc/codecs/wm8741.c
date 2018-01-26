@@ -37,6 +37,8 @@ static const char *wm8741_supply_names[WM8741_NUM_SUPPLIES] = {
 	"DVDD",
 };
 
+#define WM8741_NUM_RATES 6
+
 /* codec private data */
 struct wm8741_priv {
 	struct wm8741_platform_data pdata;
@@ -196,7 +198,7 @@ static int wm8741_hw_params(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_codec *codec = dai->codec;
 	struct wm8741_priv *wm8741 = snd_soc_codec_get_drvdata(codec);
-	unsigned int iface;
+	u16 iface = snd_soc_read(codec, WM8741_FORMAT_CONTROL) & 0x1FC;
 	int i;
 
 	/* The set of sample rates that can be supported depends on the
@@ -223,16 +225,15 @@ static int wm8741_hw_params(struct snd_pcm_substream *substream,
 	/* bit size */
 	switch (params_width(params)) {
 	case 16:
-		iface = 0x0;
 		break;
 	case 20:
-		iface = 0x1;
+		iface |= 0x0001;
 		break;
 	case 24:
-		iface = 0x2;
+		iface |= 0x0002;
 		break;
 	case 32:
-		iface = 0x3;
+		iface |= 0x0003;
 		break;
 	default:
 		dev_dbg(codec->dev, "wm8741_hw_params:    Unsupported bit size param = %d",
@@ -243,9 +244,7 @@ static int wm8741_hw_params(struct snd_pcm_substream *substream,
 	dev_dbg(codec->dev, "wm8741_hw_params:    bit size param = %d, rate param = %d",
 		params_width(params), params_rate(params));
 
-	snd_soc_update_bits(codec, WM8741_FORMAT_CONTROL, WM8741_IWL_MASK,
-			    iface);
-
+	snd_soc_write(codec, WM8741_FORMAT_CONTROL, iface);
 	return 0;
 }
 
@@ -298,7 +297,7 @@ static int wm8741_set_dai_fmt(struct snd_soc_dai *codec_dai,
 		unsigned int fmt)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	unsigned int iface;
+	u16 iface = snd_soc_read(codec, WM8741_FORMAT_CONTROL) & 0x1C3;
 
 	/* check master/slave audio interface */
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
@@ -311,19 +310,18 @@ static int wm8741_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	/* interface format */
 	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
 	case SND_SOC_DAIFMT_I2S:
-		iface = 0x08;
+		iface |= 0x0008;
 		break;
 	case SND_SOC_DAIFMT_RIGHT_J:
-		iface = 0x00;
 		break;
 	case SND_SOC_DAIFMT_LEFT_J:
-		iface = 0x04;
+		iface |= 0x0004;
 		break;
 	case SND_SOC_DAIFMT_DSP_A:
-		iface = 0x0C;
+		iface |= 0x000C;
 		break;
 	case SND_SOC_DAIFMT_DSP_B:
-		iface = 0x1C;
+		iface |= 0x001C;
 		break;
 	default:
 		return -EINVAL;
@@ -333,14 +331,14 @@ static int wm8741_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
 	case SND_SOC_DAIFMT_NB_NF:
 		break;
-	case SND_SOC_DAIFMT_NB_IF:
-		iface |= 0x10;
+	case SND_SOC_DAIFMT_IB_IF:
+		iface |= 0x0010;
 		break;
 	case SND_SOC_DAIFMT_IB_NF:
-		iface |= 0x20;
+		iface |= 0x0020;
 		break;
-	case SND_SOC_DAIFMT_IB_IF:
-		iface |= 0x30;
+	case SND_SOC_DAIFMT_NB_IF:
+		iface |= 0x0030;
 		break;
 	default:
 		return -EINVAL;
@@ -351,10 +349,7 @@ static int wm8741_set_dai_fmt(struct snd_soc_dai *codec_dai,
 				fmt & SND_SOC_DAIFMT_FORMAT_MASK,
 				((fmt & SND_SOC_DAIFMT_INV_MASK)));
 
-	snd_soc_update_bits(codec, WM8741_FORMAT_CONTROL,
-			    WM8741_BCP_MASK | WM8741_LRP_MASK | WM8741_FMT_MASK,
-			    iface);
-
+	snd_soc_write(codec, WM8741_FORMAT_CONTROL, iface);
 	return 0;
 }
 
@@ -502,17 +497,15 @@ static int wm8741_remove(struct snd_soc_codec *codec)
 	return 0;
 }
 
-static const struct snd_soc_codec_driver soc_codec_dev_wm8741 = {
+static struct snd_soc_codec_driver soc_codec_dev_wm8741 = {
 	.probe =	wm8741_probe,
 	.remove =	wm8741_remove,
 	.resume =	wm8741_resume,
 
-	.component_driver = {
-		.dapm_widgets		= wm8741_dapm_widgets,
-		.num_dapm_widgets	= ARRAY_SIZE(wm8741_dapm_widgets),
-		.dapm_routes		= wm8741_dapm_routes,
-		.num_dapm_routes	= ARRAY_SIZE(wm8741_dapm_routes),
-	},
+	.dapm_widgets = wm8741_dapm_widgets,
+	.num_dapm_widgets = ARRAY_SIZE(wm8741_dapm_widgets),
+	.dapm_routes = wm8741_dapm_routes,
+	.num_dapm_routes = ARRAY_SIZE(wm8741_dapm_routes),
 };
 
 static const struct of_device_id wm8741_of_match[] = {

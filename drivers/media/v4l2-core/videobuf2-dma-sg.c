@@ -12,7 +12,6 @@
 
 #include <linux/module.h>
 #include <linux/mm.h>
-#include <linux/refcount.h>
 #include <linux/scatterlist.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
@@ -31,6 +30,10 @@ module_param(debug, int, 0644);
 			printk(KERN_DEBUG "vb2-dma-sg: " fmt, ## arg);	\
 	} while (0)
 
+struct vb2_dma_sg_conf {
+	struct device		*dev;
+};
+
 struct vb2_dma_sg_buf {
 	struct device			*dev;
 	void				*vaddr;
@@ -47,7 +50,7 @@ struct vb2_dma_sg_buf {
 	struct sg_table			*dma_sgt;
 	size_t				size;
 	unsigned int			num_pages;
-	refcount_t			refcount;
+	atomic_t			refcount;
 	struct vb2_vmarea_handler	handler;
 
 	struct dma_buf_attachment	*db_attach;
@@ -96,21 +99,23 @@ static int vb2_dma_sg_alloc_compacted(struct vb2_dma_sg_buf *buf,
 	return 0;
 }
 
-static void *vb2_dma_sg_alloc(struct device *dev, unsigned long dma_attrs,
-			      unsigned long size, enum dma_data_direction dma_dir,
-			      gfp_t gfp_flags)
+static void *vb2_dma_sg_alloc(void *alloc_ctx, unsigned long size,
+			      enum dma_data_direction dma_dir, gfp_t gfp_flags)
 {
+	struct vb2_dma_sg_conf *conf = alloc_ctx;
 	struct vb2_dma_sg_buf *buf;
 	struct sg_table *sgt;
 	int ret;
 	int num_pages;
+	DEFINE_DMA_ATTRS(attrs);
 
-	if (WARN_ON(!dev))
-		return ERR_PTR(-EINVAL);
+	dma_set_attr(DMA_ATTR_SKIP_CPU_SYNC, &attrs);
 
+	if (WARN_ON(alloc_ctx == NULL))
+		return NULL;
 	buf = kzalloc(sizeof *buf, GFP_KERNEL);
 	if (!buf)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 
 	buf->vaddr = NULL;
 	buf->dma_dir = dma_dir;
@@ -120,8 +125,8 @@ static void *vb2_dma_sg_alloc(struct device *dev, unsigned long dma_attrs,
 	buf->num_pages = size >> PAGE_SHIFT;
 	buf->dma_sgt = &buf->sg_table;
 
-	buf->pages = kvmalloc_array(buf->num_pages, sizeof(struct page *),
-				    GFP_KERNEL | __GFP_ZERO);
+	buf->pages = kzalloc(buf->num_pages * sizeof(struct page *),
+			     GFP_KERNEL);
 	if (!buf->pages)
 		goto fail_pages_array_alloc;
 
@@ -135,7 +140,7 @@ static void *vb2_dma_sg_alloc(struct device *dev, unsigned long dma_attrs,
 		goto fail_table_alloc;
 
 	/* Prevent the device from being released while the buffer is used */
-	buf->dev = get_device(dev);
+	buf->dev = get_device(conf->dev);
 
 	sgt = &buf->sg_table;
 	/*
@@ -143,7 +148,7 @@ static void *vb2_dma_sg_alloc(struct device *dev, unsigned long dma_attrs,
 	 * prepare() memop is called.
 	 */
 	sgt->nents = dma_map_sg_attrs(buf->dev, sgt->sgl, sgt->orig_nents,
-				      buf->dma_dir, DMA_ATTR_SKIP_CPU_SYNC);
+				      buf->dma_dir, &attrs);
 	if (!sgt->nents)
 		goto fail_map;
 
@@ -151,7 +156,7 @@ static void *vb2_dma_sg_alloc(struct device *dev, unsigned long dma_attrs,
 	buf->handler.put = vb2_dma_sg_put;
 	buf->handler.arg = buf;
 
-	refcount_set(&buf->refcount, 1);
+	atomic_inc(&buf->refcount);
 
 	dprintk(1, "%s: Allocated buffer of %d pages\n",
 		__func__, buf->num_pages);
@@ -165,10 +170,10 @@ fail_table_alloc:
 	while (num_pages--)
 		__free_page(buf->pages[num_pages]);
 fail_pages_alloc:
-	kvfree(buf->pages);
+	kfree(buf->pages);
 fail_pages_array_alloc:
 	kfree(buf);
-	return ERR_PTR(-ENOMEM);
+	return NULL;
 }
 
 static void vb2_dma_sg_put(void *buf_priv)
@@ -177,17 +182,20 @@ static void vb2_dma_sg_put(void *buf_priv)
 	struct sg_table *sgt = &buf->sg_table;
 	int i = buf->num_pages;
 
-	if (refcount_dec_and_test(&buf->refcount)) {
+	if (atomic_dec_and_test(&buf->refcount)) {
+		DEFINE_DMA_ATTRS(attrs);
+
+		dma_set_attr(DMA_ATTR_SKIP_CPU_SYNC, &attrs);
 		dprintk(1, "%s: Freeing buffer of %d pages\n", __func__,
 			buf->num_pages);
 		dma_unmap_sg_attrs(buf->dev, sgt->sgl, sgt->orig_nents,
-				   buf->dma_dir, DMA_ATTR_SKIP_CPU_SYNC);
+				   buf->dma_dir, &attrs);
 		if (buf->vaddr)
 			vm_unmap_ram(buf->vaddr, buf->num_pages);
 		sg_free_table(buf->dma_sgt);
 		while (--i >= 0)
 			__free_page(buf->pages[i]);
-		kvfree(buf->pages);
+		kfree(buf->pages);
 		put_device(buf->dev);
 		kfree(buf);
 	}
@@ -218,29 +226,28 @@ static void vb2_dma_sg_finish(void *buf_priv)
 	dma_sync_sg_for_cpu(buf->dev, sgt->sgl, sgt->orig_nents, buf->dma_dir);
 }
 
-static void *vb2_dma_sg_get_userptr(struct device *dev, unsigned long vaddr,
+static void *vb2_dma_sg_get_userptr(void *alloc_ctx, unsigned long vaddr,
 				    unsigned long size,
 				    enum dma_data_direction dma_dir)
 {
+	struct vb2_dma_sg_conf *conf = alloc_ctx;
 	struct vb2_dma_sg_buf *buf;
 	struct sg_table *sgt;
+	DEFINE_DMA_ATTRS(attrs);
 	struct frame_vector *vec;
 
-	if (WARN_ON(!dev))
-		return ERR_PTR(-EINVAL);
-
+	dma_set_attr(DMA_ATTR_SKIP_CPU_SYNC, &attrs);
 	buf = kzalloc(sizeof *buf, GFP_KERNEL);
 	if (!buf)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 
 	buf->vaddr = NULL;
-	buf->dev = dev;
+	buf->dev = conf->dev;
 	buf->dma_dir = dma_dir;
 	buf->offset = vaddr & ~PAGE_MASK;
 	buf->size = size;
 	buf->dma_sgt = &buf->sg_table;
-	vec = vb2_create_framevec(vaddr, size, dma_dir == DMA_FROM_DEVICE ||
-					       dma_dir == DMA_BIDIRECTIONAL);
+	vec = vb2_create_framevec(vaddr, size, buf->dma_dir == DMA_FROM_DEVICE);
 	if (IS_ERR(vec))
 		goto userptr_fail_pfnvec;
 	buf->vec = vec;
@@ -260,7 +267,7 @@ static void *vb2_dma_sg_get_userptr(struct device *dev, unsigned long vaddr,
 	 * prepare() memop is called.
 	 */
 	sgt->nents = dma_map_sg_attrs(buf->dev, sgt->sgl, sgt->orig_nents,
-				      buf->dma_dir, DMA_ATTR_SKIP_CPU_SYNC);
+				      buf->dma_dir, &attrs);
 	if (!sgt->nents)
 		goto userptr_fail_map;
 
@@ -272,7 +279,7 @@ userptr_fail_sgtable:
 	vb2_destroy_framevec(vec);
 userptr_fail_pfnvec:
 	kfree(buf);
-	return ERR_PTR(-ENOMEM);
+	return NULL;
 }
 
 /*
@@ -284,17 +291,19 @@ static void vb2_dma_sg_put_userptr(void *buf_priv)
 	struct vb2_dma_sg_buf *buf = buf_priv;
 	struct sg_table *sgt = &buf->sg_table;
 	int i = buf->num_pages;
+	DEFINE_DMA_ATTRS(attrs);
+
+	dma_set_attr(DMA_ATTR_SKIP_CPU_SYNC, &attrs);
 
 	dprintk(1, "%s: Releasing userspace buffer of %d pages\n",
 	       __func__, buf->num_pages);
 	dma_unmap_sg_attrs(buf->dev, sgt->sgl, sgt->orig_nents, buf->dma_dir,
-			   DMA_ATTR_SKIP_CPU_SYNC);
+			   &attrs);
 	if (buf->vaddr)
 		vm_unmap_ram(buf->vaddr, buf->num_pages);
 	sg_free_table(buf->dma_sgt);
 	while (--i >= 0) {
-		if (buf->dma_dir == DMA_FROM_DEVICE ||
-		    buf->dma_dir == DMA_BIDIRECTIONAL)
+		if (buf->dma_dir == DMA_FROM_DEVICE)
 			set_page_dirty_lock(buf->pages[i]);
 	}
 	vb2_destroy_framevec(buf->vec);
@@ -323,7 +332,7 @@ static unsigned int vb2_dma_sg_num_users(void *buf_priv)
 {
 	struct vb2_dma_sg_buf *buf = buf_priv;
 
-	return refcount_read(&buf->refcount);
+	return atomic_read(&buf->refcount);
 }
 
 static int vb2_dma_sg_mmap(void *buf_priv, struct vm_area_struct *vma)
@@ -502,13 +511,13 @@ static int vb2_dma_sg_dmabuf_ops_mmap(struct dma_buf *dbuf,
 	return vb2_dma_sg_mmap(dbuf->priv, vma);
 }
 
-static const struct dma_buf_ops vb2_dma_sg_dmabuf_ops = {
+static struct dma_buf_ops vb2_dma_sg_dmabuf_ops = {
 	.attach = vb2_dma_sg_dmabuf_ops_attach,
 	.detach = vb2_dma_sg_dmabuf_ops_detach,
 	.map_dma_buf = vb2_dma_sg_dmabuf_ops_map,
 	.unmap_dma_buf = vb2_dma_sg_dmabuf_ops_unmap,
-	.map = vb2_dma_sg_dmabuf_ops_kmap,
-	.map_atomic = vb2_dma_sg_dmabuf_ops_kmap,
+	.kmap = vb2_dma_sg_dmabuf_ops_kmap,
+	.kmap_atomic = vb2_dma_sg_dmabuf_ops_kmap,
 	.vmap = vb2_dma_sg_dmabuf_ops_vmap,
 	.mmap = vb2_dma_sg_dmabuf_ops_mmap,
 	.release = vb2_dma_sg_dmabuf_ops_release,
@@ -533,7 +542,7 @@ static struct dma_buf *vb2_dma_sg_get_dmabuf(void *buf_priv, unsigned long flags
 		return NULL;
 
 	/* dmabuf keeps reference to vb2 buffer */
-	refcount_inc(&buf->refcount);
+	atomic_inc(&buf->refcount);
 
 	return dbuf;
 }
@@ -607,14 +616,12 @@ static void vb2_dma_sg_detach_dmabuf(void *mem_priv)
 	kfree(buf);
 }
 
-static void *vb2_dma_sg_attach_dmabuf(struct device *dev, struct dma_buf *dbuf,
+static void *vb2_dma_sg_attach_dmabuf(void *alloc_ctx, struct dma_buf *dbuf,
 	unsigned long size, enum dma_data_direction dma_dir)
 {
+	struct vb2_dma_sg_conf *conf = alloc_ctx;
 	struct vb2_dma_sg_buf *buf;
 	struct dma_buf_attachment *dba;
-
-	if (WARN_ON(!dev))
-		return ERR_PTR(-EINVAL);
 
 	if (dbuf->size < size)
 		return ERR_PTR(-EFAULT);
@@ -623,7 +630,7 @@ static void *vb2_dma_sg_attach_dmabuf(struct device *dev, struct dma_buf *dbuf,
 	if (!buf)
 		return ERR_PTR(-ENOMEM);
 
-	buf->dev = dev;
+	buf->dev = conf->dev;
 	/* create attachment for the dmabuf with the user device */
 	dba = dma_buf_attach(dbuf, buf->dev);
 	if (IS_ERR(dba)) {
@@ -664,6 +671,27 @@ const struct vb2_mem_ops vb2_dma_sg_memops = {
 	.cookie		= vb2_dma_sg_cookie,
 };
 EXPORT_SYMBOL_GPL(vb2_dma_sg_memops);
+
+void *vb2_dma_sg_init_ctx(struct device *dev)
+{
+	struct vb2_dma_sg_conf *conf;
+
+	conf = kzalloc(sizeof(*conf), GFP_KERNEL);
+	if (!conf)
+		return ERR_PTR(-ENOMEM);
+
+	conf->dev = dev;
+
+	return conf;
+}
+EXPORT_SYMBOL_GPL(vb2_dma_sg_init_ctx);
+
+void vb2_dma_sg_cleanup_ctx(void *alloc_ctx)
+{
+	if (!IS_ERR_OR_NULL(alloc_ctx))
+		kfree(alloc_ctx);
+}
+EXPORT_SYMBOL_GPL(vb2_dma_sg_cleanup_ctx);
 
 MODULE_DESCRIPTION("dma scatter/gather memory handling routines for videobuf2");
 MODULE_AUTHOR("Andrzej Pietrasiewicz");

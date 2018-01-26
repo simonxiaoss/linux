@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * drivers/power/process.c - Functions for starting/stopping processes on 
  *                           suspend transitions.
@@ -13,8 +12,6 @@
 #include <linux/oom.h>
 #include <linux/suspend.h>
 #include <linux/module.h>
-#include <linux/sched/debug.h>
-#include <linux/sched/task.h>
 #include <linux/syscalls.h>
 #include <linux/freezer.h>
 #include <linux/delay.h>
@@ -34,12 +31,13 @@ static int try_to_freeze_tasks(bool user_only)
 	unsigned long end_time;
 	unsigned int todo;
 	bool wq_busy = false;
-	ktime_t start, end, elapsed;
+	struct timeval start, end;
+	u64 elapsed_msecs64;
 	unsigned int elapsed_msecs;
 	bool wakeup = false;
 	int sleep_usecs = USEC_PER_MSEC;
 
-	start = ktime_get_boottime();
+	do_gettimeofday(&start);
 
 	end_time = jiffies + msecs_to_jiffies(freeze_timeout_msecs);
 
@@ -81,9 +79,10 @@ static int try_to_freeze_tasks(bool user_only)
 			sleep_usecs *= 2;
 	}
 
-	end = ktime_get_boottime();
-	elapsed = ktime_sub(end, start);
-	elapsed_msecs = ktime_to_ms(elapsed);
+	do_gettimeofday(&end);
+	elapsed_msecs64 = timeval_to_ns(&end) - timeval_to_ns(&start);
+	do_div(elapsed_msecs64, NSEC_PER_MSEC);
+	elapsed_msecs = elapsed_msecs64;
 
 	if (todo) {
 		pr_cont("\n");
@@ -92,9 +91,6 @@ static int try_to_freeze_tasks(bool user_only)
 		       wakeup ? "aborted" : "failed",
 		       elapsed_msecs / 1000, elapsed_msecs % 1000,
 		       todo - wq_busy, wq_busy);
-
-		if (wq_busy)
-			show_workqueue_state();
 
 		if (!wakeup) {
 			read_lock(&tasklist_lock);
@@ -134,7 +130,7 @@ int freeze_processes(void)
 	if (!pm_freezing)
 		atomic_inc(&system_freezing_cnt);
 
-	pm_wakeup_clear(true);
+	pm_wakeup_clear();
 	pr_info("Freezing user space processes ... ");
 	pm_freezing = true;
 	error = try_to_freeze_tasks(true);
@@ -148,10 +144,9 @@ int freeze_processes(void)
 	/*
 	 * Now that the whole userspace is frozen we need to disbale
 	 * the OOM killer to disallow any further interference with
-	 * killable tasks. There is no guarantee oom victims will
-	 * ever reach a point they go away we have to wait with a timeout.
+	 * killable tasks.
 	 */
-	if (!error && !oom_killer_disable(msecs_to_jiffies(freeze_timeout_msecs)))
+	if (!error && !oom_killer_disable())
 		error = -EBUSY;
 
 	if (error)

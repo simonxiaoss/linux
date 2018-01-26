@@ -35,9 +35,6 @@
 #include <linux/ipc_namespace.h>
 #include <linux/user_namespace.h>
 #include <linux/slab.h>
-#include <linux/sched/wake_q.h>
-#include <linux/sched/signal.h>
-#include <linux/sched/user.h>
 
 #include <net/sock.h>
 #include "util.h"
@@ -228,7 +225,7 @@ static struct inode *mqueue_get_inode(struct super_block *sb,
 	inode->i_mode = mode;
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
-	inode->i_mtime = inode->i_ctime = inode->i_atime = current_time(inode);
+	inode->i_mtime = inode->i_ctime = inode->i_atime = CURRENT_TIME;
 
 	if (S_ISREG(mode)) {
 		struct mqueue_inode_info *info;
@@ -308,11 +305,10 @@ err:
 static int mqueue_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode;
-	struct ipc_namespace *ns = sb->s_fs_info;
+	struct ipc_namespace *ns = data;
 
-	sb->s_iflags |= SB_I_NOEXEC | SB_I_NODEV;
-	sb->s_blocksize = PAGE_SIZE;
-	sb->s_blocksize_bits = PAGE_SHIFT;
+	sb->s_blocksize = PAGE_CACHE_SIZE;
+	sb->s_blocksize_bits = PAGE_CACHE_SHIFT;
 	sb->s_magic = MQUEUE_MAGIC;
 	sb->s_op = &mqueue_super_ops;
 
@@ -330,14 +326,17 @@ static struct dentry *mqueue_mount(struct file_system_type *fs_type,
 			 int flags, const char *dev_name,
 			 void *data)
 {
-	struct ipc_namespace *ns;
-	if (flags & SB_KERNMOUNT) {
-		ns = data;
-		data = NULL;
-	} else {
-		ns = current->nsproxy->ipc_ns;
+	if (!(flags & MS_KERNMOUNT)) {
+		struct ipc_namespace *ns = current->nsproxy->ipc_ns;
+		/* Don't allow mounting unless the caller has CAP_SYS_ADMIN
+		 * over the ipc namespace.
+		 */
+		if (!ns_capable(ns->user_ns, CAP_SYS_ADMIN))
+			return ERR_PTR(-EPERM);
+
+		data = ns;
 	}
-	return mount_ns(fs_type, flags, data, ns, ns->user_ns, mqueue_fill_super);
+	return mount_ns(fs_type, flags, data, mqueue_fill_super);
 }
 
 static void init_once(void *foo)
@@ -449,7 +448,7 @@ static int mqueue_create(struct inode *dir, struct dentry *dentry,
 
 	put_ipc_ns(ipc_ns);
 	dir->i_size += DIRENT_SIZE;
-	dir->i_ctime = dir->i_mtime = dir->i_atime = current_time(dir);
+	dir->i_ctime = dir->i_mtime = dir->i_atime = CURRENT_TIME;
 
 	d_instantiate(dentry, inode);
 	dget(dentry);
@@ -465,7 +464,7 @@ static int mqueue_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct inode *inode = d_inode(dentry);
 
-	dir->i_ctime = dir->i_mtime = dir->i_atime = current_time(dir);
+	dir->i_ctime = dir->i_mtime = dir->i_atime = CURRENT_TIME;
 	dir->i_size -= DIRENT_SIZE;
 	drop_nlink(inode);
 	dput(dentry);
@@ -503,7 +502,7 @@ static ssize_t mqueue_read_file(struct file *filp, char __user *u_data,
 	if (ret <= 0)
 		return ret;
 
-	file_inode(filp)->i_atime = file_inode(filp)->i_ctime = current_time(file_inode(filp));
+	file_inode(filp)->i_atime = file_inode(filp)->i_ctime = CURRENT_TIME;
 	return ret;
 }
 
@@ -561,7 +560,6 @@ static void wq_add(struct mqueue_inode_info *info, int sr,
  */
 static int wq_sleep(struct mqueue_inode_info *info, int sr,
 		    ktime_t *timeout, struct ext_wait_queue *ewp)
-	__releases(&info->lock)
 {
 	int retval;
 	signed long time;
@@ -668,12 +666,14 @@ static void __do_notify(struct mqueue_inode_info *info)
 }
 
 static int prepare_timeout(const struct timespec __user *u_abs_timeout,
-			   struct timespec64 *ts)
+			   ktime_t *expires, struct timespec *ts)
 {
-	if (get_timespec64(ts, u_abs_timeout))
+	if (copy_from_user(ts, u_abs_timeout, sizeof(struct timespec)))
 		return -EFAULT;
-	if (!timespec64_valid(ts))
+	if (!timespec_valid(ts))
 		return -EINVAL;
+
+	*expires = timespec_to_ktime(*ts);
 	return 0;
 }
 
@@ -768,19 +768,23 @@ static struct file *do_open(struct path *path, int oflag)
 	return dentry_open(path, oflag, current_cred());
 }
 
-static int do_mq_open(const char __user *u_name, int oflag, umode_t mode,
-		      struct mq_attr *attr)
+SYSCALL_DEFINE4(mq_open, const char __user *, u_name, int, oflag, umode_t, mode,
+		struct mq_attr __user *, u_attr)
 {
 	struct path path;
 	struct file *filp;
 	struct filename *name;
+	struct mq_attr attr;
 	int fd, error;
 	struct ipc_namespace *ipc_ns = current->nsproxy->ipc_ns;
 	struct vfsmount *mnt = ipc_ns->mq_mnt;
 	struct dentry *root = mnt->mnt_root;
 	int ro;
 
-	audit_mq_open(oflag, mode, attr);
+	if (u_attr && copy_from_user(&attr, u_attr, sizeof(struct mq_attr)))
+		return -EFAULT;
+
+	audit_mq_open(oflag, mode, u_attr ? &attr : NULL);
 
 	if (IS_ERR(name = getname(u_name)))
 		return PTR_ERR(name);
@@ -791,7 +795,7 @@ static int do_mq_open(const char __user *u_name, int oflag, umode_t mode,
 
 	ro = mnt_want_write(mnt);	/* we'll drop it in any case */
 	error = 0;
-	inode_lock(d_inode(root));
+	mutex_lock(&d_inode(root)->i_mutex);
 	path.dentry = lookup_one_len(name->name, root, strlen(name->name));
 	if (IS_ERR(path.dentry)) {
 		error = PTR_ERR(path.dentry);
@@ -813,8 +817,9 @@ static int do_mq_open(const char __user *u_name, int oflag, umode_t mode,
 				goto out;
 			}
 			audit_inode_parent_hidden(name, root);
-			filp = do_create(ipc_ns, d_inode(root), &path,
-					 oflag, mode, attr);
+			filp = do_create(ipc_ns, d_inode(root),
+						&path, oflag, mode,
+						u_attr ? &attr : NULL);
 		}
 	} else {
 		if (d_really_is_negative(path.dentry)) {
@@ -836,22 +841,12 @@ out_putfd:
 		put_unused_fd(fd);
 		fd = error;
 	}
-	inode_unlock(d_inode(root));
+	mutex_unlock(&d_inode(root)->i_mutex);
 	if (!ro)
 		mnt_drop_write(mnt);
 out_putname:
 	putname(name);
 	return fd;
-}
-
-SYSCALL_DEFINE4(mq_open, const char __user *, u_name, int, oflag, umode_t, mode,
-		struct mq_attr __user *, u_attr)
-{
-	struct mq_attr attr;
-	if (u_attr && copy_from_user(&attr, u_attr, sizeof(struct mq_attr)))
-		return -EFAULT;
-
-	return do_mq_open(u_name, oflag, mode, u_attr ? &attr : NULL);
 }
 
 SYSCALL_DEFINE1(mq_unlink, const char __user *, u_name)
@@ -871,7 +866,7 @@ SYSCALL_DEFINE1(mq_unlink, const char __user *, u_name)
 	err = mnt_want_write(mnt);
 	if (err)
 		goto out_name;
-	inode_lock_nested(d_inode(mnt->mnt_root), I_MUTEX_PARENT);
+	mutex_lock_nested(&d_inode(mnt->mnt_root)->i_mutex, I_MUTEX_PARENT);
 	dentry = lookup_one_len(name->name, mnt->mnt_root,
 				strlen(name->name));
 	if (IS_ERR(dentry)) {
@@ -889,7 +884,7 @@ SYSCALL_DEFINE1(mq_unlink, const char __user *, u_name)
 	dput(dentry);
 
 out_unlock:
-	inode_unlock(d_inode(mnt->mnt_root));
+	mutex_unlock(&d_inode(mnt->mnt_root)->i_mutex);
 	if (inode)
 		iput(inode);
 	mnt_drop_write(mnt);
@@ -960,9 +955,9 @@ static inline void pipelined_receive(struct wake_q_head *wake_q,
 	sender->state = STATE_READY;
 }
 
-static int do_mq_timedsend(mqd_t mqdes, const char __user *u_msg_ptr,
-		size_t msg_len, unsigned int msg_prio,
-		struct timespec64 *ts)
+SYSCALL_DEFINE5(mq_timedsend, mqd_t, mqdes, const char __user *, u_msg_ptr,
+		size_t, msg_len, unsigned int, msg_prio,
+		const struct timespec __user *, u_abs_timeout)
 {
 	struct fd f;
 	struct inode *inode;
@@ -971,19 +966,22 @@ static int do_mq_timedsend(mqd_t mqdes, const char __user *u_msg_ptr,
 	struct msg_msg *msg_ptr;
 	struct mqueue_inode_info *info;
 	ktime_t expires, *timeout = NULL;
+	struct timespec ts;
 	struct posix_msg_tree_node *new_leaf = NULL;
 	int ret = 0;
-	DEFINE_WAKE_Q(wake_q);
+	WAKE_Q(wake_q);
+
+	if (u_abs_timeout) {
+		int res = prepare_timeout(u_abs_timeout, &expires, &ts);
+		if (res)
+			return res;
+		timeout = &expires;
+	}
 
 	if (unlikely(msg_prio >= (unsigned long) MQ_PRIO_MAX))
 		return -EINVAL;
 
-	if (ts) {
-		expires = timespec64_to_ktime(*ts);
-		timeout = &expires;
-	}
-
-	audit_mq_sendrecv(mqdes, msg_len, msg_prio, ts);
+	audit_mq_sendrecv(mqdes, msg_len, msg_prio, timeout ? &ts : NULL);
 
 	f = fdget(mqdes);
 	if (unlikely(!f.file)) {
@@ -1064,7 +1062,7 @@ static int do_mq_timedsend(mqd_t mqdes, const char __user *u_msg_ptr,
 			__do_notify(info);
 		}
 		inode->i_atime = inode->i_mtime = inode->i_ctime =
-				current_time(inode);
+				CURRENT_TIME;
 	}
 out_unlock:
 	spin_unlock(&info->lock);
@@ -1078,9 +1076,9 @@ out:
 	return ret;
 }
 
-static int do_mq_timedreceive(mqd_t mqdes, char __user *u_msg_ptr,
-		size_t msg_len, unsigned int __user *u_msg_prio,
-		struct timespec64 *ts)
+SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes, char __user *, u_msg_ptr,
+		size_t, msg_len, unsigned int __user *, u_msg_prio,
+		const struct timespec __user *, u_abs_timeout)
 {
 	ssize_t ret;
 	struct msg_msg *msg_ptr;
@@ -1089,14 +1087,17 @@ static int do_mq_timedreceive(mqd_t mqdes, char __user *u_msg_ptr,
 	struct mqueue_inode_info *info;
 	struct ext_wait_queue wait;
 	ktime_t expires, *timeout = NULL;
+	struct timespec ts;
 	struct posix_msg_tree_node *new_leaf = NULL;
 
-	if (ts) {
-		expires = timespec64_to_ktime(*ts);
+	if (u_abs_timeout) {
+		int res = prepare_timeout(u_abs_timeout, &expires, &ts);
+		if (res)
+			return res;
 		timeout = &expires;
 	}
 
-	audit_mq_sendrecv(mqdes, msg_len, 0, ts);
+	audit_mq_sendrecv(mqdes, msg_len, 0, timeout ? &ts : NULL);
 
 	f = fdget(mqdes);
 	if (unlikely(!f.file)) {
@@ -1152,12 +1153,12 @@ static int do_mq_timedreceive(mqd_t mqdes, char __user *u_msg_ptr,
 			msg_ptr = wait.msg;
 		}
 	} else {
-		DEFINE_WAKE_Q(wake_q);
+		WAKE_Q(wake_q);
 
 		msg_ptr = msg_get(info);
 
 		inode->i_atime = inode->i_mtime = inode->i_ctime =
-				current_time(inode);
+				CURRENT_TIME;
 
 		/* There is now free space in queue. */
 		pipelined_receive(&wake_q, info);
@@ -1180,62 +1181,42 @@ out:
 	return ret;
 }
 
-SYSCALL_DEFINE5(mq_timedsend, mqd_t, mqdes, const char __user *, u_msg_ptr,
-		size_t, msg_len, unsigned int, msg_prio,
-		const struct timespec __user *, u_abs_timeout)
-{
-	struct timespec64 ts, *p = NULL;
-	if (u_abs_timeout) {
-		int res = prepare_timeout(u_abs_timeout, &ts);
-		if (res)
-			return res;
-		p = &ts;
-	}
-	return do_mq_timedsend(mqdes, u_msg_ptr, msg_len, msg_prio, p);
-}
-
-SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes, char __user *, u_msg_ptr,
-		size_t, msg_len, unsigned int __user *, u_msg_prio,
-		const struct timespec __user *, u_abs_timeout)
-{
-	struct timespec64 ts, *p = NULL;
-	if (u_abs_timeout) {
-		int res = prepare_timeout(u_abs_timeout, &ts);
-		if (res)
-			return res;
-		p = &ts;
-	}
-	return do_mq_timedreceive(mqdes, u_msg_ptr, msg_len, u_msg_prio, p);
-}
-
 /*
  * Notes: the case when user wants us to deregister (with NULL as pointer)
  * and he isn't currently owner of notification, will be silently discarded.
  * It isn't explicitly defined in the POSIX.
  */
-static int do_mq_notify(mqd_t mqdes, const struct sigevent *notification)
+SYSCALL_DEFINE2(mq_notify, mqd_t, mqdes,
+		const struct sigevent __user *, u_notification)
 {
 	int ret;
 	struct fd f;
 	struct sock *sock;
 	struct inode *inode;
+	struct sigevent notification;
 	struct mqueue_inode_info *info;
 	struct sk_buff *nc;
 
-	audit_mq_notify(mqdes, notification);
+	if (u_notification) {
+		if (copy_from_user(&notification, u_notification,
+					sizeof(struct sigevent)))
+			return -EFAULT;
+	}
+
+	audit_mq_notify(mqdes, u_notification ? &notification : NULL);
 
 	nc = NULL;
 	sock = NULL;
-	if (notification != NULL) {
-		if (unlikely(notification->sigev_notify != SIGEV_NONE &&
-			     notification->sigev_notify != SIGEV_SIGNAL &&
-			     notification->sigev_notify != SIGEV_THREAD))
+	if (u_notification != NULL) {
+		if (unlikely(notification.sigev_notify != SIGEV_NONE &&
+			     notification.sigev_notify != SIGEV_SIGNAL &&
+			     notification.sigev_notify != SIGEV_THREAD))
 			return -EINVAL;
-		if (notification->sigev_notify == SIGEV_SIGNAL &&
-			!valid_signal(notification->sigev_signo)) {
+		if (notification.sigev_notify == SIGEV_SIGNAL &&
+			!valid_signal(notification.sigev_signo)) {
 			return -EINVAL;
 		}
-		if (notification->sigev_notify == SIGEV_THREAD) {
+		if (notification.sigev_notify == SIGEV_THREAD) {
 			long timeo;
 
 			/* create the notify skb */
@@ -1245,7 +1226,7 @@ static int do_mq_notify(mqd_t mqdes, const struct sigevent *notification)
 				goto out;
 			}
 			if (copy_from_user(nc->data,
-					notification->sigev_value.sival_ptr,
+					notification.sigev_value.sival_ptr,
 					NOTIFY_COOKIE_LEN)) {
 				ret = -EFAULT;
 				goto out;
@@ -1255,7 +1236,7 @@ static int do_mq_notify(mqd_t mqdes, const struct sigevent *notification)
 			skb_put(nc, NOTIFY_COOKIE_LEN);
 			/* and attach it to the socket */
 retry:
-			f = fdget(notification->sigev_signo);
+			f = fdget(notification.sigev_signo);
 			if (!f.file) {
 				ret = -EBADF;
 				goto out;
@@ -1297,15 +1278,15 @@ retry:
 
 	ret = 0;
 	spin_lock(&info->lock);
-	if (notification == NULL) {
+	if (u_notification == NULL) {
 		if (info->notify_owner == task_tgid(current)) {
 			remove_notification(info);
-			inode->i_atime = inode->i_ctime = current_time(inode);
+			inode->i_atime = inode->i_ctime = CURRENT_TIME;
 		}
 	} else if (info->notify_owner != NULL) {
 		ret = -EBUSY;
 	} else {
-		switch (notification->sigev_notify) {
+		switch (notification.sigev_notify) {
 		case SIGEV_NONE:
 			info->notify.sigev_notify = SIGEV_NONE;
 			break;
@@ -1317,15 +1298,15 @@ retry:
 			info->notify.sigev_notify = SIGEV_THREAD;
 			break;
 		case SIGEV_SIGNAL:
-			info->notify.sigev_signo = notification->sigev_signo;
-			info->notify.sigev_value = notification->sigev_value;
+			info->notify.sigev_signo = notification.sigev_signo;
+			info->notify.sigev_value = notification.sigev_value;
 			info->notify.sigev_notify = SIGEV_SIGNAL;
 			break;
 		}
 
 		info->notify_owner = get_pid(task_tgid(current));
 		info->notify_user_ns = get_user_ns(current_user_ns());
-		inode->i_atime = inode->i_ctime = current_time(inode);
+		inode->i_atime = inode->i_ctime = CURRENT_TIME;
 	}
 	spin_unlock(&info->lock);
 out_fput:
@@ -1339,220 +1320,64 @@ out:
 	return ret;
 }
 
-SYSCALL_DEFINE2(mq_notify, mqd_t, mqdes,
-		const struct sigevent __user *, u_notification)
-{
-	struct sigevent n, *p = NULL;
-	if (u_notification) {
-		if (copy_from_user(&n, u_notification, sizeof(struct sigevent)))
-			return -EFAULT;
-		p = &n;
-	}
-	return do_mq_notify(mqdes, p);
-}
-
-static int do_mq_getsetattr(int mqdes, struct mq_attr *new, struct mq_attr *old)
-{
-	struct fd f;
-	struct inode *inode;
-	struct mqueue_inode_info *info;
-
-	if (new && (new->mq_flags & (~O_NONBLOCK)))
-		return -EINVAL;
-
-	f = fdget(mqdes);
-	if (!f.file)
-		return -EBADF;
-
-	if (unlikely(f.file->f_op != &mqueue_file_operations)) {
-		fdput(f);
-		return -EBADF;
-	}
-
-	inode = file_inode(f.file);
-	info = MQUEUE_I(inode);
-
-	spin_lock(&info->lock);
-
-	if (old) {
-		*old = info->attr;
-		old->mq_flags = f.file->f_flags & O_NONBLOCK;
-	}
-	if (new) {
-		audit_mq_getsetattr(mqdes, new);
-		spin_lock(&f.file->f_lock);
-		if (new->mq_flags & O_NONBLOCK)
-			f.file->f_flags |= O_NONBLOCK;
-		else
-			f.file->f_flags &= ~O_NONBLOCK;
-		spin_unlock(&f.file->f_lock);
-
-		inode->i_atime = inode->i_ctime = current_time(inode);
-	}
-
-	spin_unlock(&info->lock);
-	fdput(f);
-	return 0;
-}
-
 SYSCALL_DEFINE3(mq_getsetattr, mqd_t, mqdes,
 		const struct mq_attr __user *, u_mqstat,
 		struct mq_attr __user *, u_omqstat)
 {
 	int ret;
 	struct mq_attr mqstat, omqstat;
-	struct mq_attr *new = NULL, *old = NULL;
+	struct fd f;
+	struct inode *inode;
+	struct mqueue_inode_info *info;
 
+	if (u_mqstat != NULL) {
+		if (copy_from_user(&mqstat, u_mqstat, sizeof(struct mq_attr)))
+			return -EFAULT;
+		if (mqstat.mq_flags & (~O_NONBLOCK))
+			return -EINVAL;
+	}
+
+	f = fdget(mqdes);
+	if (!f.file) {
+		ret = -EBADF;
+		goto out;
+	}
+
+	inode = file_inode(f.file);
+	if (unlikely(f.file->f_op != &mqueue_file_operations)) {
+		ret = -EBADF;
+		goto out_fput;
+	}
+	info = MQUEUE_I(inode);
+
+	spin_lock(&info->lock);
+
+	omqstat = info->attr;
+	omqstat.mq_flags = f.file->f_flags & O_NONBLOCK;
 	if (u_mqstat) {
-		new = &mqstat;
-		if (copy_from_user(new, u_mqstat, sizeof(struct mq_attr)))
-			return -EFAULT;
+		audit_mq_getsetattr(mqdes, &mqstat);
+		spin_lock(&f.file->f_lock);
+		if (mqstat.mq_flags & O_NONBLOCK)
+			f.file->f_flags |= O_NONBLOCK;
+		else
+			f.file->f_flags &= ~O_NONBLOCK;
+		spin_unlock(&f.file->f_lock);
+
+		inode->i_atime = inode->i_ctime = CURRENT_TIME;
 	}
-	if (u_omqstat)
-		old = &omqstat;
 
-	ret = do_mq_getsetattr(mqdes, new, old);
-	if (ret || !old)
-		return ret;
+	spin_unlock(&info->lock);
 
-	if (copy_to_user(u_omqstat, old, sizeof(struct mq_attr)))
-		return -EFAULT;
-	return 0;
+	ret = 0;
+	if (u_omqstat != NULL && copy_to_user(u_omqstat, &omqstat,
+						sizeof(struct mq_attr)))
+		ret = -EFAULT;
+
+out_fput:
+	fdput(f);
+out:
+	return ret;
 }
-
-#ifdef CONFIG_COMPAT
-
-struct compat_mq_attr {
-	compat_long_t mq_flags;      /* message queue flags		     */
-	compat_long_t mq_maxmsg;     /* maximum number of messages	     */
-	compat_long_t mq_msgsize;    /* maximum message size		     */
-	compat_long_t mq_curmsgs;    /* number of messages currently queued  */
-	compat_long_t __reserved[4]; /* ignored for input, zeroed for output */
-};
-
-static inline int get_compat_mq_attr(struct mq_attr *attr,
-			const struct compat_mq_attr __user *uattr)
-{
-	struct compat_mq_attr v;
-
-	if (copy_from_user(&v, uattr, sizeof(*uattr)))
-		return -EFAULT;
-
-	memset(attr, 0, sizeof(*attr));
-	attr->mq_flags = v.mq_flags;
-	attr->mq_maxmsg = v.mq_maxmsg;
-	attr->mq_msgsize = v.mq_msgsize;
-	attr->mq_curmsgs = v.mq_curmsgs;
-	return 0;
-}
-
-static inline int put_compat_mq_attr(const struct mq_attr *attr,
-			struct compat_mq_attr __user *uattr)
-{
-	struct compat_mq_attr v;
-
-	memset(&v, 0, sizeof(v));
-	v.mq_flags = attr->mq_flags;
-	v.mq_maxmsg = attr->mq_maxmsg;
-	v.mq_msgsize = attr->mq_msgsize;
-	v.mq_curmsgs = attr->mq_curmsgs;
-	if (copy_to_user(uattr, &v, sizeof(*uattr)))
-		return -EFAULT;
-	return 0;
-}
-
-COMPAT_SYSCALL_DEFINE4(mq_open, const char __user *, u_name,
-		       int, oflag, compat_mode_t, mode,
-		       struct compat_mq_attr __user *, u_attr)
-{
-	struct mq_attr attr, *p = NULL;
-	if (u_attr && oflag & O_CREAT) {
-		p = &attr;
-		if (get_compat_mq_attr(&attr, u_attr))
-			return -EFAULT;
-	}
-	return do_mq_open(u_name, oflag, mode, p);
-}
-
-static int compat_prepare_timeout(const struct compat_timespec __user *p,
-				   struct timespec64 *ts)
-{
-	if (compat_get_timespec64(ts, p))
-		return -EFAULT;
-	if (!timespec64_valid(ts))
-		return -EINVAL;
-	return 0;
-}
-
-COMPAT_SYSCALL_DEFINE5(mq_timedsend, mqd_t, mqdes,
-		       const char __user *, u_msg_ptr,
-		       compat_size_t, msg_len, unsigned int, msg_prio,
-		       const struct compat_timespec __user *, u_abs_timeout)
-{
-	struct timespec64 ts, *p = NULL;
-	if (u_abs_timeout) {
-		int res = compat_prepare_timeout(u_abs_timeout, &ts);
-		if (res)
-			return res;
-		p = &ts;
-	}
-	return do_mq_timedsend(mqdes, u_msg_ptr, msg_len, msg_prio, p);
-}
-
-COMPAT_SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes,
-		       char __user *, u_msg_ptr,
-		       compat_size_t, msg_len, unsigned int __user *, u_msg_prio,
-		       const struct compat_timespec __user *, u_abs_timeout)
-{
-	struct timespec64 ts, *p = NULL;
-	if (u_abs_timeout) {
-		int res = compat_prepare_timeout(u_abs_timeout, &ts);
-		if (res)
-			return res;
-		p = &ts;
-	}
-	return do_mq_timedreceive(mqdes, u_msg_ptr, msg_len, u_msg_prio, p);
-}
-
-COMPAT_SYSCALL_DEFINE2(mq_notify, mqd_t, mqdes,
-		       const struct compat_sigevent __user *, u_notification)
-{
-	struct sigevent n, *p = NULL;
-	if (u_notification) {
-		if (get_compat_sigevent(&n, u_notification))
-			return -EFAULT;
-		if (n.sigev_notify == SIGEV_THREAD)
-			n.sigev_value.sival_ptr = compat_ptr(n.sigev_value.sival_int);
-		p = &n;
-	}
-	return do_mq_notify(mqdes, p);
-}
-
-COMPAT_SYSCALL_DEFINE3(mq_getsetattr, mqd_t, mqdes,
-		       const struct compat_mq_attr __user *, u_mqstat,
-		       struct compat_mq_attr __user *, u_omqstat)
-{
-	int ret;
-	struct mq_attr mqstat, omqstat;
-	struct mq_attr *new = NULL, *old = NULL;
-
-	if (u_mqstat) {
-		new = &mqstat;
-		if (get_compat_mq_attr(new, u_mqstat))
-			return -EFAULT;
-	}
-	if (u_omqstat)
-		old = &omqstat;
-
-	ret = do_mq_getsetattr(mqdes, new, old);
-	if (ret || !old)
-		return ret;
-
-	if (put_compat_mq_attr(old, u_omqstat))
-		return -EFAULT;
-	return 0;
-}
-#endif
 
 static const struct inode_operations mqueue_dir_inode_operations = {
 	.lookup = simple_lookup,
@@ -1615,7 +1440,7 @@ static int __init init_mqueue_fs(void)
 
 	mqueue_inode_cachep = kmem_cache_create("mqueue_inode_cache",
 				sizeof(struct mqueue_inode_info), 0,
-				SLAB_HWCACHE_ALIGN|SLAB_ACCOUNT, init_once);
+				SLAB_HWCACHE_ALIGN, init_once);
 	if (mqueue_inode_cachep == NULL)
 		return -ENOMEM;
 

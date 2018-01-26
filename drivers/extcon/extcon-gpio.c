@@ -17,7 +17,7 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/extcon-provider.h>
+#include <linux/extcon.h>
 #include <linux/extcon/extcon-gpio.h>
 #include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
@@ -49,8 +49,7 @@ static void gpio_extcon_work(struct work_struct *work)
 	state = gpiod_get_value_cansleep(data->id_gpiod);
 	if (data->pdata->gpio_active_low)
 		state = !state;
-
-	extcon_set_state_sync(data->edev, data->pdata->extcon_id, state);
+	extcon_set_state(data->edev, state);
 }
 
 static irqreturn_t gpio_irq_handler(int irq, void *dev_id)
@@ -127,7 +126,7 @@ static int gpio_extcon_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&data->work, gpio_extcon_work);
 
 	/*
-	 * Request the interrupt of gpio to detect whether external connector
+	 * Request the interrput of gpio to detect whether external connector
 	 * is attached or detached.
 	 */
 	ret = devm_request_any_context_irq(&pdev->dev, data->irq,

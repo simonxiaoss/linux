@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * USB 7 Segment Driver
  *
  * Copyright (C) 2008 Harrison Metzger <harrisonmetz@gmail.com>
  * Based on usbled.c by Greg Kroah-Hartman (greg@kroah.com)
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License as
+ *	published by the Free Software Foundation, version 2.
+ *
  */
 
 #include <linux/kernel.h>
@@ -29,7 +33,7 @@ static const struct usb_device_id id_table[] = {
 MODULE_DEVICE_TABLE(usb, id_table);
 
 /* the different text display modes the device is capable of */
-static const char *display_textmodes[] = {"raw", "hex", "ascii"};
+static char *display_textmodes[] = {"raw", "hex", "ascii", NULL};
 
 struct usb_sevsegdev {
 	struct usb_device *udev;
@@ -124,8 +128,10 @@ static void update_display_visual(struct usb_sevsegdev *mydev, gfp_t mf)
 		return;
 
 	buffer = kzalloc(MAXLEN, mf);
-	if (!buffer)
+	if (!buffer) {
+		dev_err(&mydev->udev->dev, "out of memory\n");
 		return;
+	}
 
 	/* The device is right to left, where as you write left to right */
 	for (i = 0; i < mydev->textlength; i++)
@@ -276,7 +282,7 @@ static ssize_t show_attr_textmode(struct device *dev,
 
 	buf[0] = 0;
 
-	for (i = 0; i < ARRAY_SIZE(display_textmodes); i++) {
+	for (i = 0; display_textmodes[i]; i++) {
 		if (mydev->textmode == i) {
 			strcat(buf, " [");
 			strcat(buf, display_textmodes[i]);
@@ -300,13 +306,15 @@ static ssize_t set_attr_textmode(struct device *dev,
 	struct usb_sevsegdev *mydev = usb_get_intfdata(intf);
 	int i;
 
-	i = sysfs_match_string(display_textmodes, buf);
-	if (i < 0)
-		return i;
+	for (i = 0; display_textmodes[i]; i++) {
+		if (sysfs_streq(display_textmodes[i], buf)) {
+			mydev->textmode = i;
+			update_display_visual(mydev, GFP_KERNEL);
+			return count;
+		}
+	}
 
-	mydev->textmode = i;
-	update_display_visual(mydev, GFP_KERNEL);
-	return count;
+	return -EINVAL;
 }
 
 static DEVICE_ATTR(textmode, S_IRUGO | S_IWUSR, show_attr_textmode, set_attr_textmode);
@@ -326,7 +334,7 @@ static struct attribute *dev_attrs[] = {
 	NULL
 };
 
-static const struct attribute_group dev_attr_grp = {
+static struct attribute_group dev_attr_grp = {
 	.attrs = dev_attrs,
 };
 
@@ -338,8 +346,10 @@ static int sevseg_probe(struct usb_interface *interface,
 	int rc = -ENOMEM;
 
 	mydev = kzalloc(sizeof(struct usb_sevsegdev), GFP_KERNEL);
-	if (!mydev)
+	if (mydev == NULL) {
+		dev_err(&interface->dev, "Out of memory\n");
 		goto error_mem;
+	}
 
 	mydev->udev = usb_get_dev(udev);
 	mydev->intf = interface;

@@ -720,6 +720,7 @@ static const struct iio_info adis16480_info = {
 	.read_raw = &adis16480_read_raw,
 	.write_raw = &adis16480_write_raw,
 	.update_scan_mode = adis_update_scan_mode,
+	.driver_module = THIS_MODULE,
 };
 
 static int adis16480_stop_device(struct iio_dev *indio_dev)
@@ -764,9 +765,7 @@ static int adis16480_initial_setup(struct iio_dev *indio_dev)
 	if (ret)
 		return ret;
 
-	ret = sscanf(indio_dev->name, "adis%u\n", &device_id);
-	if (ret != 1)
-		return -EINVAL;
+	sscanf(indio_dev->name, "adis%u\n", &device_id);
 
 	if (prod_id != device_id)
 		dev_warn(&indio_dev->dev, "Device ID(%u) and product ID(%u) do not match.",

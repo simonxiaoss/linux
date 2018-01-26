@@ -201,10 +201,10 @@ static const enum fe_code_rate fec_conv_sat[] = {
 	FEC_2_3, /* for 8PSK. (trellis code) */
 };
 
-static int tc90522s_get_frontend(struct dvb_frontend *fe,
-				 struct dtv_frontend_properties *c)
+static int tc90522s_get_frontend(struct dvb_frontend *fe)
 {
 	struct tc90522_state *state;
+	struct dtv_frontend_properties *c;
 	struct dtv_fe_stats *stats;
 	int ret, i;
 	int layers;
@@ -212,6 +212,7 @@ static int tc90522s_get_frontend(struct dvb_frontend *fe,
 	u32 cndat;
 
 	state = fe->demodulator_priv;
+	c = &fe->dtv_property_cache;
 	c->delivery_system = SYS_ISDBS;
 	c->symbol_rate = 28860000;
 
@@ -336,10 +337,10 @@ static const enum fe_modulation mod_conv[] = {
 	DQPSK, QPSK, QAM_16, QAM_64, 0, 0, 0, 0
 };
 
-static int tc90522t_get_frontend(struct dvb_frontend *fe,
-				 struct dtv_frontend_properties *c)
+static int tc90522t_get_frontend(struct dvb_frontend *fe)
 {
 	struct tc90522_state *state;
+	struct dtv_frontend_properties *c;
 	struct dtv_fe_stats *stats;
 	int ret, i;
 	int layers;
@@ -347,6 +348,7 @@ static int tc90522t_get_frontend(struct dvb_frontend *fe,
 	u32 cndat;
 
 	state = fe->demodulator_priv;
+	c = &fe->dtv_property_cache;
 	c->delivery_system = SYS_ISDBT;
 	c->bandwidth_hz = 6000000;
 	mode = 1;
@@ -656,7 +658,7 @@ tc90522_master_xfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 	for (i = 0; i < num; i++)
 		if (msgs[i].flags & I2C_M_RD)
 			rd_num++;
-	new_msgs = kmalloc_array(num + rd_num, sizeof(*new_msgs), GFP_KERNEL);
+	new_msgs = kmalloc(sizeof(*new_msgs) * (num + rd_num), GFP_KERNEL);
 	if (!new_msgs)
 		return -ENOMEM;
 
@@ -794,13 +796,14 @@ static int tc90522_probe(struct i2c_client *client,
 	i2c_set_adapdata(adap, state);
 	ret = i2c_add_adapter(adap);
 	if (ret < 0)
-		goto free_state;
+		goto err;
 	cfg->tuner_i2c = state->cfg.tuner_i2c = adap;
 
 	i2c_set_clientdata(client, &state->cfg);
 	dev_info(&client->dev, "Toshiba TC90522 attached.\n");
 	return 0;
-free_state:
+
+err:
 	kfree(state);
 	return ret;
 }

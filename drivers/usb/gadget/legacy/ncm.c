@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * ncm.c -- NCM gadget driver
  *
@@ -10,6 +9,11 @@
  * Copyright (C) 2003-2005,2008 David Brownell
  * Copyright (C) 2003-2004 Robert Schwebel, Benedikt Spranger
  * Copyright (C) 2008 Nokia Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 /* #define DEBUG */
@@ -45,7 +49,7 @@ static struct usb_device_descriptor device_desc = {
 	.bLength =		sizeof device_desc,
 	.bDescriptorType =	USB_DT_DEVICE,
 
-	/* .bcdUSB = DYNAMIC */
+	.bcdUSB =		cpu_to_le16 (0x0200),
 
 	.bDeviceClass =		USB_CLASS_COMM,
 	.bDeviceSubClass =	0,

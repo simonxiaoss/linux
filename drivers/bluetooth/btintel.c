@@ -43,13 +43,13 @@ int btintel_check_bdaddr(struct hci_dev *hdev)
 			     HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb)) {
 		int err = PTR_ERR(skb);
-		bt_dev_err(hdev, "Reading Intel device address failed (%d)",
-			   err);
+		BT_ERR("%s: Reading Intel device address failed (%d)",
+		       hdev->name, err);
 		return err;
 	}
 
 	if (skb->len != sizeof(*bda)) {
-		bt_dev_err(hdev, "Intel device address length mismatch");
+		BT_ERR("%s: Intel device address length mismatch", hdev->name);
 		kfree_skb(skb);
 		return -EIO;
 	}
@@ -62,8 +62,8 @@ int btintel_check_bdaddr(struct hci_dev *hdev)
 	 * and that in turn can cause problems with Bluetooth operation.
 	 */
 	if (!bacmp(&bda->bdaddr, BDADDR_INTEL)) {
-		bt_dev_err(hdev, "Found Intel default device address (%pMR)",
-			   &bda->bdaddr);
+		BT_ERR("%s: Found Intel default device address (%pMR)",
+		       hdev->name, &bda->bdaddr);
 		set_bit(HCI_QUIRK_INVALID_BDADDR, &hdev->quirks);
 	}
 
@@ -73,48 +73,6 @@ int btintel_check_bdaddr(struct hci_dev *hdev)
 }
 EXPORT_SYMBOL_GPL(btintel_check_bdaddr);
 
-int btintel_enter_mfg(struct hci_dev *hdev)
-{
-	const u8 param[] = { 0x01, 0x00 };
-	struct sk_buff *skb;
-
-	skb = __hci_cmd_sync(hdev, 0xfc11, 2, param, HCI_CMD_TIMEOUT);
-	if (IS_ERR(skb)) {
-		bt_dev_err(hdev, "Entering manufacturer mode failed (%ld)",
-			   PTR_ERR(skb));
-		return PTR_ERR(skb);
-	}
-	kfree_skb(skb);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(btintel_enter_mfg);
-
-int btintel_exit_mfg(struct hci_dev *hdev, bool reset, bool patched)
-{
-	u8 param[] = { 0x00, 0x00 };
-	struct sk_buff *skb;
-
-	/* The 2nd command parameter specifies the manufacturing exit method:
-	 * 0x00: Just disable the manufacturing mode (0x00).
-	 * 0x01: Disable manufacturing mode and reset with patches deactivated.
-	 * 0x02: Disable manufacturing mode and reset with patches activated.
-	 */
-	if (reset)
-		param[1] |= patched ? 0x02 : 0x01;
-
-	skb = __hci_cmd_sync(hdev, 0xfc11, 2, param, HCI_CMD_TIMEOUT);
-	if (IS_ERR(skb)) {
-		bt_dev_err(hdev, "Exiting manufacturer mode failed (%ld)",
-			   PTR_ERR(skb));
-		return PTR_ERR(skb);
-	}
-	kfree_skb(skb);
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(btintel_exit_mfg);
-
 int btintel_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
 {
 	struct sk_buff *skb;
@@ -123,8 +81,8 @@ int btintel_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
 	skb = __hci_cmd_sync(hdev, 0xfc31, 6, bdaddr, HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb)) {
 		err = PTR_ERR(skb);
-		bt_dev_err(hdev, "Changing Intel device address failed (%d)",
-			   err);
+		BT_ERR("%s: Changing Intel device address failed (%d)",
+		       hdev->name, err);
 		return err;
 	}
 	kfree_skb(skb);
@@ -154,8 +112,8 @@ int btintel_set_diag(struct hci_dev *hdev, bool enable)
 		err = PTR_ERR(skb);
 		if (err == -ENODATA)
 			goto done;
-		bt_dev_err(hdev, "Changing Intel diagnostic mode failed (%d)",
-			   err);
+		BT_ERR("%s: Changing Intel diagnostic mode failed (%d)",
+		       hdev->name, err);
 		return err;
 	}
 	kfree_skb(skb);
@@ -168,19 +126,37 @@ EXPORT_SYMBOL_GPL(btintel_set_diag);
 
 int btintel_set_diag_mfg(struct hci_dev *hdev, bool enable)
 {
-	int err, ret;
+	struct sk_buff *skb;
+	u8 param[2];
+	int err;
 
-	err = btintel_enter_mfg(hdev);
-	if (err)
-		return err;
+	param[0] = 0x01;
+	param[1] = 0x00;
 
-	ret = btintel_set_diag(hdev, enable);
+	skb = __hci_cmd_sync(hdev, 0xfc11, 2, param, HCI_INIT_TIMEOUT);
+	if (IS_ERR(skb)) {
+		err = PTR_ERR(skb);
+		BT_ERR("%s: Entering Intel manufacturer mode failed (%d)",
+		       hdev->name, err);
+		return PTR_ERR(skb);
+	}
+	kfree_skb(skb);
 
-	err = btintel_exit_mfg(hdev, false, false);
-	if (err)
-		return err;
+	err = btintel_set_diag(hdev, enable);
 
-	return ret;
+	param[0] = 0x00;
+	param[1] = 0x00;
+
+	skb = __hci_cmd_sync(hdev, 0xfc11, 2, param, HCI_INIT_TIMEOUT);
+	if (IS_ERR(skb)) {
+		err = PTR_ERR(skb);
+		BT_ERR("%s: Leaving Intel manufacturer mode failed (%d)",
+		       hdev->name, err);
+		return PTR_ERR(skb);
+	}
+	kfree_skb(skb);
+
+	return err;
 }
 EXPORT_SYMBOL_GPL(btintel_set_diag_mfg);
 
@@ -189,30 +165,30 @@ void btintel_hw_error(struct hci_dev *hdev, u8 code)
 	struct sk_buff *skb;
 	u8 type = 0x00;
 
-	bt_dev_err(hdev, "Hardware error 0x%2.2x", code);
+	BT_ERR("%s: Hardware error 0x%2.2x", hdev->name, code);
 
 	skb = __hci_cmd_sync(hdev, HCI_OP_RESET, 0, NULL, HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb)) {
-		bt_dev_err(hdev, "Reset after hardware error failed (%ld)",
-			   PTR_ERR(skb));
+		BT_ERR("%s: Reset after hardware error failed (%ld)",
+		       hdev->name, PTR_ERR(skb));
 		return;
 	}
 	kfree_skb(skb);
 
 	skb = __hci_cmd_sync(hdev, 0xfc22, 1, &type, HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb)) {
-		bt_dev_err(hdev, "Retrieving Intel exception info failed (%ld)",
-			   PTR_ERR(skb));
+		BT_ERR("%s: Retrieving Intel exception info failed (%ld)",
+		       hdev->name, PTR_ERR(skb));
 		return;
 	}
 
 	if (skb->len != 13) {
-		bt_dev_err(hdev, "Exception info size mismatch");
+		BT_ERR("%s: Exception info size mismatch", hdev->name);
 		kfree_skb(skb);
 		return;
 	}
 
-	bt_dev_err(hdev, "Exception info %s", (char *)(skb->data + 1));
+	BT_ERR("%s: Exception info %s", hdev->name, (char *)(skb->data + 1));
 
 	kfree_skb(skb);
 }
@@ -233,10 +209,9 @@ void btintel_version_info(struct hci_dev *hdev, struct intel_version *ver)
 		return;
 	}
 
-	bt_dev_info(hdev, "%s revision %u.%u build %u week %u %u",
-		    variant, ver->fw_revision >> 4, ver->fw_revision & 0x0f,
-		    ver->fw_build_num, ver->fw_build_ww,
-		    2000 + ver->fw_build_yy);
+	BT_INFO("%s: %s revision %u.%u build %u week %u %u", hdev->name,
+		variant, ver->fw_revision >> 4, ver->fw_revision & 0x0f,
+		ver->fw_build_num, ver->fw_build_ww, 2000 + ver->fw_build_yy);
 }
 EXPORT_SYMBOL_GPL(btintel_version_info);
 
@@ -322,7 +297,8 @@ int btintel_set_event_mask(struct hci_dev *hdev, bool debug)
 	skb = __hci_cmd_sync(hdev, 0xfc52, 8, mask, HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb)) {
 		err = PTR_ERR(skb);
-		bt_dev_err(hdev, "Setting Intel event mask failed (%d)", err);
+		BT_ERR("%s: Setting Intel event mask failed (%d)",
+		       hdev->name, err);
 		return err;
 	}
 	kfree_skb(skb);
@@ -333,46 +309,39 @@ EXPORT_SYMBOL_GPL(btintel_set_event_mask);
 
 int btintel_set_event_mask_mfg(struct hci_dev *hdev, bool debug)
 {
-	int err, ret;
-
-	err = btintel_enter_mfg(hdev);
-	if (err)
-		return err;
-
-	ret = btintel_set_event_mask(hdev, debug);
-
-	err = btintel_exit_mfg(hdev, false, false);
-	if (err)
-		return err;
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(btintel_set_event_mask_mfg);
-
-int btintel_read_version(struct hci_dev *hdev, struct intel_version *ver)
-{
 	struct sk_buff *skb;
+	u8 param[2];
+	int err;
 
-	skb = __hci_cmd_sync(hdev, 0xfc05, 0, NULL, HCI_CMD_TIMEOUT);
+	param[0] = 0x01;
+	param[1] = 0x00;
+
+	skb = __hci_cmd_sync(hdev, 0xfc11, 2, param, HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb)) {
-		bt_dev_err(hdev, "Reading Intel version information failed (%ld)",
-			   PTR_ERR(skb));
+		err = PTR_ERR(skb);
+		BT_ERR("%s: Entering Intel manufacturer mode failed (%d)",
+		       hdev->name, err);
 		return PTR_ERR(skb);
 	}
-
-	if (skb->len != sizeof(*ver)) {
-		bt_dev_err(hdev, "Intel version event size mismatch");
-		kfree_skb(skb);
-		return -EILSEQ;
-	}
-
-	memcpy(ver, skb->data, sizeof(*ver));
-
 	kfree_skb(skb);
 
-	return 0;
+	err = btintel_set_event_mask(hdev, debug);
+
+	param[0] = 0x00;
+	param[1] = 0x00;
+
+	skb = __hci_cmd_sync(hdev, 0xfc11, 2, param, HCI_INIT_TIMEOUT);
+	if (IS_ERR(skb)) {
+		err = PTR_ERR(skb);
+		BT_ERR("%s: Leaving Intel manufacturer mode failed (%d)",
+		       hdev->name, err);
+		return PTR_ERR(skb);
+	}
+	kfree_skb(skb);
+
+	return err;
 }
-EXPORT_SYMBOL_GPL(btintel_read_version);
+EXPORT_SYMBOL_GPL(btintel_set_event_mask_mfg);
 
 /* ------- REGMAP IBT SUPPORT ------- */
 
@@ -575,5 +544,3 @@ MODULE_VERSION(VERSION);
 MODULE_LICENSE("GPL");
 MODULE_FIRMWARE("intel/ibt-11-5.sfi");
 MODULE_FIRMWARE("intel/ibt-11-5.ddc");
-MODULE_FIRMWARE("intel/ibt-12-16.sfi");
-MODULE_FIRMWARE("intel/ibt-12-16.ddc");

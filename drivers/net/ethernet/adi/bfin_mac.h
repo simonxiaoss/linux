@@ -68,6 +68,13 @@ struct net_dma_desc_tx {
 };
 
 struct bfin_mac_local {
+	/*
+	 * these are things that the kernel wants me to keep, so users
+	 * can find out semi-useless statistics of how well the card is
+	 * performing
+	 */
+	struct net_device_stats stats;
+
 	spinlock_t lock;
 
 	int wol;		/* Wake On Lan */
@@ -85,6 +92,7 @@ struct bfin_mac_local {
 	int old_speed;
 	int old_duplex;
 
+	struct phy_device *phydev;
 	struct mii_bus *mii_bus;
 
 #if defined(CONFIG_BFIN_MAC_USE_HWSTAMP)

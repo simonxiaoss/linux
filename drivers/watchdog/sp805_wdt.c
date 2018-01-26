@@ -139,11 +139,12 @@ static int wdt_config(struct watchdog_device *wdd, bool ping)
 
 	writel_relaxed(UNLOCK, wdt->base + WDTLOCK);
 	writel_relaxed(wdt->load_val, wdt->base + WDTLOAD);
-	writel_relaxed(INT_MASK, wdt->base + WDTINTCLR);
 
-	if (!ping)
+	if (!ping) {
+		writel_relaxed(INT_MASK, wdt->base + WDTINTCLR);
 		writel_relaxed(INT_ENABLE | RESET_ENABLE, wdt->base +
 				WDTCONTROL);
+	}
 
 	writel_relaxed(LOCK, wdt->base + WDTLOCK);
 
@@ -281,7 +282,7 @@ static int __maybe_unused sp805_wdt_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(sp805_wdt_dev_pm_ops, sp805_wdt_suspend,
 		sp805_wdt_resume);
 
-static const struct amba_id sp805_wdt_ids[] = {
+static struct amba_id sp805_wdt_ids[] = {
 	{
 		.id	= 0x00141805,
 		.mask	= 0x00ffffff,

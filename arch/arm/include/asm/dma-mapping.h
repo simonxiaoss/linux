@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef ASMARM_DMA_MAPPING_H
 #define ASMARM_DMA_MAPPING_H
 
@@ -6,6 +5,7 @@
 
 #include <linux/mm_types.h>
 #include <linux/scatterlist.h>
+#include <linux/dma-attrs.h>
 #include <linux/dma-debug.h>
 
 #include <asm/memory.h>
@@ -13,13 +13,40 @@
 #include <xen/xen.h>
 #include <asm/xen/hypervisor.h>
 
-extern const struct dma_map_ops arm_dma_ops;
-extern const struct dma_map_ops arm_coherent_dma_ops;
+#define DMA_ERROR_CODE	(~(dma_addr_t)0x0)
+extern struct dma_map_ops arm_dma_ops;
+extern struct dma_map_ops arm_coherent_dma_ops;
 
-static inline const struct dma_map_ops *get_arch_dma_ops(struct bus_type *bus)
+static inline struct dma_map_ops *__generic_dma_ops(struct device *dev)
 {
-	return IS_ENABLED(CONFIG_MMU) ? &arm_dma_ops : &dma_noop_ops;
+	if (dev && dev->archdata.dma_ops)
+		return dev->archdata.dma_ops;
+	return &arm_dma_ops;
 }
+
+static inline struct dma_map_ops *get_dma_ops(struct device *dev)
+{
+	if (xen_initial_domain())
+		return xen_dma_ops;
+	else
+		return __generic_dma_ops(dev);
+}
+
+static inline void set_dma_ops(struct device *dev, struct dma_map_ops *ops)
+{
+	BUG_ON(!dev);
+	dev->archdata.dma_ops = ops;
+}
+
+#define HAVE_ARCH_DMA_SUPPORTED 1
+extern int dma_supported(struct device *dev, u64 mask);
+
+/*
+ * Note that while the generic code provides dummy dma_{alloc,free}_noncoherent
+ * implementations, we don't provide a dma_cache_sync function so drivers using
+ * this API are highlighted with build warnings.
+ */
+#include <asm-generic/dma-mapping-common.h>
 
 #ifdef __arch_page_to_dma
 #error Please update to __arch_pfn_to_dma
@@ -98,7 +125,7 @@ static inline unsigned long dma_max_pfn(struct device *dev)
 
 #define arch_setup_dma_ops arch_setup_dma_ops
 extern void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
-			       const struct iommu_ops *iommu, bool coherent);
+			       struct iommu_ops *iommu, bool coherent);
 
 #define arch_teardown_dma_ops arch_teardown_dma_ops
 extern void arch_teardown_dma_ops(struct device *dev);
@@ -142,6 +169,8 @@ static inline bool dma_capable(struct device *dev, dma_addr_t addr, size_t size)
 
 static inline void dma_mark_clean(void *addr, size_t size) { }
 
+extern int arm_dma_set_mask(struct device *dev, u64 dma_mask);
+
 /**
  * arm_dma_alloc - allocate consistent memory for DMA
  * @dev: valid struct device pointer, or NULL for ISA and EISA-like devices
@@ -154,7 +183,7 @@ static inline void dma_mark_clean(void *addr, size_t size) { }
  * to be the device-viewed address.
  */
 extern void *arm_dma_alloc(struct device *dev, size_t size, dma_addr_t *handle,
-			   gfp_t gfp, unsigned long attrs);
+			   gfp_t gfp, struct dma_attrs *attrs);
 
 /**
  * arm_dma_free - free memory allocated by arm_dma_alloc
@@ -171,7 +200,7 @@ extern void *arm_dma_alloc(struct device *dev, size_t size, dma_addr_t *handle,
  * during and after this call executing are illegal.
  */
 extern void arm_dma_free(struct device *dev, size_t size, void *cpu_addr,
-			 dma_addr_t handle, unsigned long attrs);
+			 dma_addr_t handle, struct dma_attrs *attrs);
 
 /**
  * arm_dma_mmap - map a coherent DMA allocation into user space
@@ -188,7 +217,14 @@ extern void arm_dma_free(struct device *dev, size_t size, void *cpu_addr,
  */
 extern int arm_dma_mmap(struct device *dev, struct vm_area_struct *vma,
 			void *cpu_addr, dma_addr_t dma_addr, size_t size,
-			unsigned long attrs);
+			struct dma_attrs *attrs);
+
+/*
+ * This can be called during early boot to increase the size of the atomic
+ * coherent DMA pool above the default value of 256KiB. It must be called
+ * before postcore_initcall.
+ */
+extern void __init init_dma_coherent_pool_size(unsigned long size);
 
 /*
  * For SA-1111, IXP425, and ADI systems  the dma-mapping functions are "magic"
@@ -235,16 +271,16 @@ extern void dmabounce_unregister_dev(struct device *);
  * The scatter list versions of the above methods.
  */
 extern int arm_dma_map_sg(struct device *, struct scatterlist *, int,
-		enum dma_data_direction, unsigned long attrs);
+		enum dma_data_direction, struct dma_attrs *attrs);
 extern void arm_dma_unmap_sg(struct device *, struct scatterlist *, int,
-		enum dma_data_direction, unsigned long attrs);
+		enum dma_data_direction, struct dma_attrs *attrs);
 extern void arm_dma_sync_sg_for_cpu(struct device *, struct scatterlist *, int,
 		enum dma_data_direction);
 extern void arm_dma_sync_sg_for_device(struct device *, struct scatterlist *, int,
 		enum dma_data_direction);
 extern int arm_dma_get_sgtable(struct device *dev, struct sg_table *sgt,
 		void *cpu_addr, dma_addr_t dma_addr, size_t size,
-		unsigned long attrs);
+		struct dma_attrs *attrs);
 
 #endif /* __KERNEL__ */
 #endif

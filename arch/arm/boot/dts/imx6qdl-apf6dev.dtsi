@@ -54,7 +54,7 @@
 		stdout-path = &uart4;
 	};
 
-	disp0 {
+	display@di0 {
 		compatible = "fsl,imx-parallel-display";
 		interface-pix-fmt = "bgr666";
 		pinctrl-names = "default";
@@ -94,7 +94,7 @@
 			label = "User button";
 			gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;
 			linux,code = <BTN_MISC>;
-			wakeup-source;
+			gpio-key,wakeup;
 		};
 	};
 
@@ -176,6 +176,7 @@
 &ecspi1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi1>;
+	fsl,spi-num-chipselects = <3>;
 	cs-gpios = <&gpio4 9 GPIO_ACTIVE_LOW>,
 		   <&gpio4 10 GPIO_ACTIVE_LOW>,
 		   <&gpio4 11 GPIO_ACTIVE_LOW>;
@@ -209,10 +210,10 @@
 	pinctrl-0 = <&pinctrl_i2c2>;
 	status = "okay";
 
-	codec: sgtl5000@a {
+	codec: sgtl5000@0a {
 		compatible = "fsl,sgtl5000";
 		reg = <0x0a>;
-		clocks = <&clks IMX6QDL_CLK_CKO>;
+		clocks = <&clks 201>;
 		VDDA-supply = <&reg_3p3v>;
 		VDDIO-supply = <&reg_3p3v>;
 	};
@@ -232,7 +233,7 @@
 &pcie {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pcie>;
-	reset-gpio = <&gpio6 2 GPIO_ACTIVE_LOW>;
+	reset-gpio = <&gpio6 2 GPIO_ACTIVE_HIGH>;
 	status = "okay";
 };
 
@@ -253,7 +254,7 @@
 &uart3 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart3 &pinctrl_gsm>;
-	uart-has-rtscts;
+	fsl,uart-has-rtscts;
 	status = "okay";
 };
 
@@ -346,13 +347,13 @@
 			fsl,pins = <
 				MX6QDL_PAD_DI0_PIN4__GPIO4_IO20		0x100b1
 				MX6QDL_PAD_DISP0_DAT18__GPIO5_IO12	0x100b1
-				MX6QDL_PAD_DISP0_DAT19__GPIO5_IO13	0x100b1
-				MX6QDL_PAD_DISP0_DAT20__GPIO5_IO14	0x100b1
-				MX6QDL_PAD_DISP0_DAT21__GPIO5_IO15	0x100b1
-				MX6QDL_PAD_DISP0_DAT22__GPIO5_IO16	0x100b1
-				MX6QDL_PAD_DISP0_DAT23__GPIO5_IO17	0x100b1
-				MX6QDL_PAD_CSI0_PIXCLK__GPIO5_IO18	0x100b1
-				MX6QDL_PAD_CSI0_VSYNC__GPIO5_IO21	0x100b1
+				MX6QDL_PAD_DISP0_DAT19__GPIO5_IO13 	0x100b1
+				MX6QDL_PAD_DISP0_DAT20__GPIO5_IO14 	0x100b1
+				MX6QDL_PAD_DISP0_DAT21__GPIO5_IO15 	0x100b1
+				MX6QDL_PAD_DISP0_DAT22__GPIO5_IO16 	0x100b1
+				MX6QDL_PAD_DISP0_DAT23__GPIO5_IO17 	0x100b1
+				MX6QDL_PAD_CSI0_PIXCLK__GPIO5_IO18 	0x100b1
+				MX6QDL_PAD_CSI0_VSYNC__GPIO5_IO21  	0x100b1
 			>;
 		};
 

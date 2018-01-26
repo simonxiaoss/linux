@@ -1,7 +1,7 @@
 /*
  * Implementation of the security services.
  *
- * Authors : Stephen Smalley, <sds@tycho.nsa.gov>
+ * Authors : Stephen Smalley, <sds@epoch.ncsc.mil>
  *	     James Morris <jmorris@redhat.com>
  *
  * Updated: Trusted Computer Solutions, Inc. <dgoeddel@trustedcs.com>
@@ -70,22 +70,9 @@
 #include "ebitmap.h"
 #include "audit.h"
 
-/* Policy capability names */
-char *selinux_policycap_names[__POLICYDB_CAPABILITY_MAX] = {
-	"network_peer_controls",
-	"open_perms",
-	"extended_socket_class",
-	"always_check_network",
-	"cgroup_seclabel",
-	"nnp_nosuid_transition"
-};
-
 int selinux_policycap_netpeer;
 int selinux_policycap_openperm;
-int selinux_policycap_extsockclass;
 int selinux_policycap_alwaysnetwork;
-int selinux_policycap_cgroupseclabel;
-int selinux_policycap_nnp_nosuid_transition;
 
 static DEFINE_RWLOCK(policy_rwlock);
 
@@ -168,7 +155,7 @@ static int selinux_set_mapping(struct policydb *pol,
 		}
 
 		k = 0;
-		while (p_in->perms[k]) {
+		while (p_in->perms && p_in->perms[k]) {
 			/* An empty permission string skips ahead */
 			if (!*p_in->perms[k]) {
 				k++;
@@ -556,7 +543,7 @@ static void type_attribute_bounds_av(struct context *scontext,
 				     struct av_decision *avd)
 {
 	struct context lo_scontext;
-	struct context lo_tcontext, *tcontextp = tcontext;
+	struct context lo_tcontext;
 	struct av_decision lo_avd;
 	struct type_datum *source;
 	struct type_datum *target;
@@ -566,41 +553,67 @@ static void type_attribute_bounds_av(struct context *scontext,
 				    scontext->type - 1);
 	BUG_ON(!source);
 
-	if (!source->bounds)
-		return;
-
 	target = flex_array_get_ptr(policydb.type_val_to_struct_array,
 				    tcontext->type - 1);
 	BUG_ON(!target);
 
-	memset(&lo_avd, 0, sizeof(lo_avd));
+	if (source->bounds) {
+		memset(&lo_avd, 0, sizeof(lo_avd));
 
-	memcpy(&lo_scontext, scontext, sizeof(lo_scontext));
-	lo_scontext.type = source->bounds;
+		memcpy(&lo_scontext, scontext, sizeof(lo_scontext));
+		lo_scontext.type = source->bounds;
 
-	if (target->bounds) {
-		memcpy(&lo_tcontext, tcontext, sizeof(lo_tcontext));
-		lo_tcontext.type = target->bounds;
-		tcontextp = &lo_tcontext;
+		context_struct_compute_av(&lo_scontext,
+					  tcontext,
+					  tclass,
+					  &lo_avd,
+					  NULL);
+		if ((lo_avd.allowed & avd->allowed) == avd->allowed)
+			return;		/* no masked permission */
+		masked = ~lo_avd.allowed & avd->allowed;
 	}
 
-	context_struct_compute_av(&lo_scontext,
-				  tcontextp,
-				  tclass,
-				  &lo_avd,
-				  NULL);
+	if (target->bounds) {
+		memset(&lo_avd, 0, sizeof(lo_avd));
 
-	masked = ~lo_avd.allowed & avd->allowed;
+		memcpy(&lo_tcontext, tcontext, sizeof(lo_tcontext));
+		lo_tcontext.type = target->bounds;
 
-	if (likely(!masked))
-		return;		/* no masked permission */
+		context_struct_compute_av(scontext,
+					  &lo_tcontext,
+					  tclass,
+					  &lo_avd,
+					  NULL);
+		if ((lo_avd.allowed & avd->allowed) == avd->allowed)
+			return;		/* no masked permission */
+		masked = ~lo_avd.allowed & avd->allowed;
+	}
 
-	/* mask violated permissions */
-	avd->allowed &= ~masked;
+	if (source->bounds && target->bounds) {
+		memset(&lo_avd, 0, sizeof(lo_avd));
+		/*
+		 * lo_scontext and lo_tcontext are already
+		 * set up.
+		 */
 
-	/* audit masked permissions */
-	security_dump_masked_av(scontext, tcontext,
-				tclass, masked, "bounds");
+		context_struct_compute_av(&lo_scontext,
+					  &lo_tcontext,
+					  tclass,
+					  &lo_avd,
+					  NULL);
+		if ((lo_avd.allowed & avd->allowed) == avd->allowed)
+			return;		/* no masked permission */
+		masked = ~lo_avd.allowed & avd->allowed;
+	}
+
+	if (masked) {
+		/* mask violated permissions */
+		avd->allowed &= ~masked;
+
+		/* audit masked permissions */
+		security_dump_masked_av(scontext, tcontext,
+					tclass, masked, "bounds");
+	}
 }
 
 /*
@@ -765,8 +778,8 @@ out:
 	return -EPERM;
 }
 
-static int security_compute_validatetrans(u32 oldsid, u32 newsid, u32 tasksid,
-					  u16 orig_tclass, bool user)
+int security_validate_transition(u32 oldsid, u32 newsid, u32 tasksid,
+				 u16 orig_tclass)
 {
 	struct context *ocontext;
 	struct context *ncontext;
@@ -781,12 +794,11 @@ static int security_compute_validatetrans(u32 oldsid, u32 newsid, u32 tasksid,
 
 	read_lock(&policy_rwlock);
 
-	if (!user)
-		tclass = unmap_class(orig_tclass);
-	else
-		tclass = orig_tclass;
+	tclass = unmap_class(orig_tclass);
 
 	if (!tclass || tclass > policydb.p_classes.nprim) {
+		printk(KERN_ERR "SELinux: %s:  unrecognized class %d\n",
+			__func__, tclass);
 		rc = -EINVAL;
 		goto out;
 	}
@@ -820,13 +832,8 @@ static int security_compute_validatetrans(u32 oldsid, u32 newsid, u32 tasksid,
 	while (constraint) {
 		if (!constraint_expr_eval(ocontext, ncontext, tcontext,
 					  constraint->expr)) {
-			if (user)
-				rc = -EPERM;
-			else
-				rc = security_validtrans_handle_fail(ocontext,
-								     ncontext,
-								     tcontext,
-								     tclass);
+			rc = security_validtrans_handle_fail(ocontext, ncontext,
+							     tcontext, tclass);
 			goto out;
 		}
 		constraint = constraint->next;
@@ -835,20 +842,6 @@ static int security_compute_validatetrans(u32 oldsid, u32 newsid, u32 tasksid,
 out:
 	read_unlock(&policy_rwlock);
 	return rc;
-}
-
-int security_validate_transition_user(u32 oldsid, u32 newsid, u32 tasksid,
-					u16 tclass)
-{
-	return security_compute_validatetrans(oldsid, newsid, tasksid,
-						tclass, true);
-}
-
-int security_validate_transition(u32 oldsid, u32 newsid, u32 tasksid,
-				 u16 orig_tclass)
-{
-	return security_compute_validatetrans(oldsid, newsid, tasksid,
-						orig_tclass, false);
 }
 
 /*
@@ -1997,34 +1990,12 @@ bad:
 
 static void security_load_policycaps(void)
 {
-	unsigned int i;
-	struct ebitmap_node *node;
-
 	selinux_policycap_netpeer = ebitmap_get_bit(&policydb.policycaps,
 						  POLICYDB_CAPABILITY_NETPEER);
 	selinux_policycap_openperm = ebitmap_get_bit(&policydb.policycaps,
 						  POLICYDB_CAPABILITY_OPENPERM);
-	selinux_policycap_extsockclass = ebitmap_get_bit(&policydb.policycaps,
-					  POLICYDB_CAPABILITY_EXTSOCKCLASS);
 	selinux_policycap_alwaysnetwork = ebitmap_get_bit(&policydb.policycaps,
 						  POLICYDB_CAPABILITY_ALWAYSNETWORK);
-	selinux_policycap_cgroupseclabel =
-		ebitmap_get_bit(&policydb.policycaps,
-				POLICYDB_CAPABILITY_CGROUPSECLABEL);
-	selinux_policycap_nnp_nosuid_transition =
-		ebitmap_get_bit(&policydb.policycaps,
-				POLICYDB_CAPABILITY_NNP_NOSUID_TRANSITION);
-
-	for (i = 0; i < ARRAY_SIZE(selinux_policycap_names); i++)
-		pr_info("SELinux:  policy capability %s=%d\n",
-			selinux_policycap_names[i],
-			ebitmap_get_bit(&policydb.policycaps, i));
-
-	ebitmap_for_each_positive_bit(&policydb.policycaps, node, i) {
-		if (i >= ARRAY_SIZE(selinux_policycap_names))
-			pr_info("SELinux:  unknown policy capability %u\n",
-				i);
-	}
 }
 
 static int security_preserve_bools(struct policydb *p);
@@ -2059,13 +2030,9 @@ int security_load_policy(void *data, size_t len)
 
 	if (!ss_initialized) {
 		avtab_cache_init();
-		ebitmap_cache_init();
-		hashtab_cache_init();
 		rc = policydb_read(&policydb, fp);
 		if (rc) {
 			avtab_cache_destroy();
-			ebitmap_cache_destroy();
-			hashtab_cache_destroy();
 			goto out;
 		}
 
@@ -2076,8 +2043,6 @@ int security_load_policy(void *data, size_t len)
 		if (rc) {
 			policydb_destroy(&policydb);
 			avtab_cache_destroy();
-			ebitmap_cache_destroy();
-			hashtab_cache_destroy();
 			goto out;
 		}
 
@@ -2085,8 +2050,6 @@ int security_load_policy(void *data, size_t len)
 		if (rc) {
 			policydb_destroy(&policydb);
 			avtab_cache_destroy();
-			ebitmap_cache_destroy();
-			hashtab_cache_destroy();
 			goto out;
 		}
 
@@ -2239,87 +2202,6 @@ int security_port_sid(u8 protocol, u16 port, u32 *out_sid)
 	} else {
 		*out_sid = SECINITSID_PORT;
 	}
-
-out:
-	read_unlock(&policy_rwlock);
-	return rc;
-}
-
-/**
- * security_pkey_sid - Obtain the SID for a pkey.
- * @subnet_prefix: Subnet Prefix
- * @pkey_num: pkey number
- * @out_sid: security identifier
- */
-int security_ib_pkey_sid(u64 subnet_prefix, u16 pkey_num, u32 *out_sid)
-{
-	struct ocontext *c;
-	int rc = 0;
-
-	read_lock(&policy_rwlock);
-
-	c = policydb.ocontexts[OCON_IBPKEY];
-	while (c) {
-		if (c->u.ibpkey.low_pkey <= pkey_num &&
-		    c->u.ibpkey.high_pkey >= pkey_num &&
-		    c->u.ibpkey.subnet_prefix == subnet_prefix)
-			break;
-
-		c = c->next;
-	}
-
-	if (c) {
-		if (!c->sid[0]) {
-			rc = sidtab_context_to_sid(&sidtab,
-						   &c->context[0],
-						   &c->sid[0]);
-			if (rc)
-				goto out;
-		}
-		*out_sid = c->sid[0];
-	} else
-		*out_sid = SECINITSID_UNLABELED;
-
-out:
-	read_unlock(&policy_rwlock);
-	return rc;
-}
-
-/**
- * security_ib_endport_sid - Obtain the SID for a subnet management interface.
- * @dev_name: device name
- * @port: port number
- * @out_sid: security identifier
- */
-int security_ib_endport_sid(const char *dev_name, u8 port_num, u32 *out_sid)
-{
-	struct ocontext *c;
-	int rc = 0;
-
-	read_lock(&policy_rwlock);
-
-	c = policydb.ocontexts[OCON_IBENDPORT];
-	while (c) {
-		if (c->u.ibendport.port == port_num &&
-		    !strncmp(c->u.ibendport.dev_name,
-			     dev_name,
-			     IB_DEVICE_NAME_MAX))
-			break;
-
-		c = c->next;
-	}
-
-	if (c) {
-		if (!c->sid[0]) {
-			rc = sidtab_context_to_sid(&sidtab,
-						   &c->context[0],
-						   &c->sid[0]);
-			if (rc)
-				goto out;
-		}
-		*out_sid = c->sid[0];
-	} else
-		*out_sid = SECINITSID_UNLABELED;
 
 out:
 	read_unlock(&policy_rwlock);
@@ -2794,7 +2676,7 @@ out:
 	return rc;
 }
 
-int security_get_bool_value(int index)
+int security_get_bool_value(int bool)
 {
 	int rc;
 	int len;
@@ -2803,10 +2685,10 @@ int security_get_bool_value(int index)
 
 	rc = -EFAULT;
 	len = policydb.p_bools.nprim;
-	if (index >= len)
+	if (bool >= len)
 		goto out;
 
-	rc = policydb.bool_val_to_struct[index]->state;
+	rc = policydb.bool_val_to_struct[bool]->state;
 out:
 	read_unlock(&policy_rwlock);
 	return rc;

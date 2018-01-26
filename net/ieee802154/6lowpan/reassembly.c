@@ -80,13 +80,12 @@ static void lowpan_frag_init(struct inet_frag_queue *q, const void *a)
 	fq->daddr = *arg->dst;
 }
 
-static void lowpan_frag_expire(struct timer_list *t)
+static void lowpan_frag_expire(unsigned long data)
 {
-	struct inet_frag_queue *frag = from_timer(frag, t, timer);
 	struct frag_queue *fq;
 	struct net *net;
 
-	fq = container_of(frag, struct frag_queue, q);
+	fq = container_of((struct inet_frag_queue *)data, struct frag_queue, q);
 	net = container_of(fq->q.net, struct net, ieee802154_lowpan.frags);
 
 	spin_lock(&fq->q.lock);
@@ -620,6 +619,7 @@ int __init lowpan_net_frag_init(void)
 	lowpan_frags.hashfn = lowpan_hashfn;
 	lowpan_frags.constructor = lowpan_frag_init;
 	lowpan_frags.destructor = NULL;
+	lowpan_frags.skb_free = NULL;
 	lowpan_frags.qsize = sizeof(struct frag_queue);
 	lowpan_frags.match = lowpan_frag_match;
 	lowpan_frags.frag_expire = lowpan_frag_expire;

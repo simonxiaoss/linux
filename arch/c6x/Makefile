@@ -12,7 +12,7 @@ cflags-y += -mno-dsbt -msdata=none -D__linux__
 
 cflags-$(CONFIG_C6X_BIG_KERNEL) += -mlong-calls
 
-KBUILD_CFLAGS_MODULE   += -mlong-calls -mno-dsbt -msdata=none
+CFLAGS_MODULE   += -mlong-calls -mno-dsbt -msdata=none
 
 CHECKFLAGS      +=
 

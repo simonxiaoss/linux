@@ -237,7 +237,7 @@ static int mid_get_vbt_data_r10(struct drm_psb_private *dev_priv, u32 addr)
 
 	gct = kmalloc(sizeof(*gct) * vbt.panel_count, GFP_KERNEL);
 	if (!gct)
-		return -ENOMEM;
+		return -1;
 
 	gct_virtual = ioremap(addr + sizeof(vbt),
 			sizeof(*gct) * vbt.panel_count);

@@ -12,12 +12,11 @@
 #ifndef _ASM_ACPI_H
 #define _ASM_ACPI_H
 
-#include <linux/memblock.h>
+#include <linux/mm.h>
 #include <linux/psci.h>
 
 #include <asm/cputype.h>
 #include <asm/smp_plat.h>
-#include <asm/tlbflush.h>
 
 /* Macros for consistency checks of the GICC subtable of MADT */
 #define ACPI_MADT_GICC_LENGTH	\
@@ -29,15 +28,11 @@
 
 /* Basic configuration for ACPI */
 #ifdef	CONFIG_ACPI
-/* ACPI table mapping after acpi_permanent_mmap is set */
+/* ACPI table mapping after acpi_gbl_permanent_mmap is set */
 static inline void __iomem *acpi_os_ioremap(acpi_physical_address phys,
 					    acpi_size size)
 {
-	/*
-	 * EFI's reserve_regions() call adds memory with the WB attribute
-	 * to memblock via early_init_dt_add_memory_arch().
-	 */
-	if (!memblock_is_memory(phys))
+	if (!page_is_ram(phys >> PAGE_SHIFT))
 		return ioremap(phys, size);
 
 	return ioremap_cache(phys, size);
@@ -85,8 +80,6 @@ static inline bool acpi_has_cpu_in_madt(void)
 	return true;
 }
 
-struct acpi_madt_generic_interrupt *acpi_cpu_get_madt_gicc(int cpu);
-
 static inline void arch_fix_phys_package_id(int num, u32 slot) { }
 void __init acpi_init_cpus(void);
 
@@ -94,48 +87,13 @@ void __init acpi_init_cpus(void);
 static inline void acpi_init_cpus(void) { }
 #endif /* CONFIG_ACPI */
 
-#ifdef CONFIG_ARM64_ACPI_PARKING_PROTOCOL
-bool acpi_parking_protocol_valid(int cpu);
-void __init
-acpi_set_mailbox_entry(int cpu, struct acpi_madt_generic_interrupt *processor);
-#else
-static inline bool acpi_parking_protocol_valid(int cpu) { return false; }
-static inline void
-acpi_set_mailbox_entry(int cpu, struct acpi_madt_generic_interrupt *processor)
-{}
-#endif
-
 static inline const char *acpi_get_enable_method(int cpu)
 {
-	if (acpi_psci_present())
-		return "psci";
-
-	if (acpi_parking_protocol_valid(cpu))
-		return "parking-protocol";
-
-	return NULL;
+	return acpi_psci_present() ? "psci" : NULL;
 }
 
 #ifdef	CONFIG_ACPI_APEI
-/*
- * acpi_disable_cmcff is used in drivers/acpi/apei/hest.c for disabling
- * IA-32 Architecture Corrected Machine Check (CMC) Firmware-First mode
- * with a kernel command line parameter "acpi=nocmcoff". But we don't
- * have this IA-32 specific feature on ARM64, this definition is only
- * for compatibility.
- */
-#define acpi_disable_cmcff 1
 pgprot_t arch_apei_get_mem_attribute(phys_addr_t addr);
-#endif /* CONFIG_ACPI_APEI */
-
-#ifdef CONFIG_ACPI_NUMA
-int arm64_acpi_numa_init(void);
-int acpi_numa_get_nid(unsigned int cpu, u64 hwid);
-#else
-static inline int arm64_acpi_numa_init(void) { return -ENOSYS; }
-static inline int acpi_numa_get_nid(unsigned int cpu, u64 hwid) { return NUMA_NO_NODE; }
-#endif /* CONFIG_ACPI_NUMA */
-
-#define ACPI_TABLE_UPGRADE_MAX_PHYS MEMBLOCK_ALLOC_ACCESSIBLE
+#endif
 
 #endif /*_ASM_ACPI_H*/

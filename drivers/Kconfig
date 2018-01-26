@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0
 menu "Device Drivers"
 
 source "drivers/amba/Kconfig"
@@ -115,8 +114,6 @@ source "drivers/rtc/Kconfig"
 
 source "drivers/dma/Kconfig"
 
-source "drivers/dma-buf/Kconfig"
-
 source "drivers/dca/Kconfig"
 
 source "drivers/auxdisplay/Kconfig"
@@ -193,8 +190,6 @@ source "drivers/android/Kconfig"
 
 source "drivers/nvdimm/Kconfig"
 
-source "drivers/dax/Kconfig"
-
 source "drivers/nvmem/Kconfig"
 
 source "drivers/hwtracing/stm/Kconfig"
@@ -202,13 +197,5 @@ source "drivers/hwtracing/stm/Kconfig"
 source "drivers/hwtracing/intel_th/Kconfig"
 
 source "drivers/fpga/Kconfig"
-
-source "drivers/fsi/Kconfig"
-
-source "drivers/tee/Kconfig"
-
-source "drivers/mux/Kconfig"
-
-source "drivers/opp/Kconfig"
 
 endmenu

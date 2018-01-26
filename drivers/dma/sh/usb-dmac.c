@@ -448,7 +448,7 @@ usb_dmac_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
 static int usb_dmac_chan_terminate_all(struct dma_chan *chan)
 {
 	struct usb_dmac_chan *uchan = to_usb_dmac_chan(chan);
-	struct usb_dmac_desc *desc, *_desc;
+	struct usb_dmac_desc *desc;
 	unsigned long flags;
 	LIST_HEAD(head);
 	LIST_HEAD(list);
@@ -459,7 +459,7 @@ static int usb_dmac_chan_terminate_all(struct dma_chan *chan)
 	if (uchan->desc)
 		uchan->desc = NULL;
 	list_splice_init(&uchan->desc_got, &list);
-	list_for_each_entry_safe(desc, _desc, &list, node)
+	list_for_each_entry(desc, &list, node)
 		list_move_tail(&desc->node, &uchan->desc_freed);
 	spin_unlock_irqrestore(&uchan->vc.lock, flags);
 	vchan_dma_desc_free_list(&uchan->vc, &head);
@@ -652,6 +652,7 @@ static bool usb_dmac_chan_filter(struct dma_chan *chan, void *arg)
 static struct dma_chan *usb_dmac_of_xlate(struct of_phandle_args *dma_spec,
 					  struct of_dma *ofdma)
 {
+	struct usb_dmac_chan *uchan;
 	struct dma_chan *chan;
 	dma_cap_mask_t mask;
 
@@ -665,6 +666,8 @@ static struct dma_chan *usb_dmac_of_xlate(struct of_phandle_args *dma_spec,
 	chan = dma_request_channel(mask, usb_dmac_chan_filter, dma_spec);
 	if (!chan)
 		return NULL;
+
+	uchan = to_usb_dmac_chan(chan);
 
 	return chan;
 }

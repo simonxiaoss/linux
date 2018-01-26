@@ -17,7 +17,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/refcount.h>
+#include <linux/atomic.h>
 #include <linux/cdev.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -47,8 +47,7 @@ static const char driver_name[] = "vme_user";
 static int bus[VME_USER_BUS_MAX];
 static unsigned int bus_num;
 
-/* Currently Documentation/admin-guide/devices.rst defines the
- * following for VME:
+/* Currently Documentation/devices.txt defines the following for VME:
  *
  * 221 char	VME bus
  *		  0 = /dev/bus/vme/m0		First master image
@@ -118,7 +117,7 @@ static const int type[VME_DEVS] = {	MASTER_MINOR,	MASTER_MINOR,
 
 struct vme_user_vma_priv {
 	unsigned int minor;
-	refcount_t refcnt;
+	atomic_t refcnt;
 };
 
 static ssize_t resource_to_user(int minor, char __user *buf, size_t count,
@@ -309,8 +308,8 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 		switch (cmd) {
 		case VME_IRQ_GEN:
 			copied = copy_from_user(&irq_req, argp,
-						sizeof(irq_req));
-			if (copied) {
+						sizeof(struct vme_irq_id));
+			if (copied != 0) {
 				pr_warn("Partial copy from userspace\n");
 				return -EFAULT;
 			}
@@ -323,7 +322,7 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 	case MASTER_MINOR:
 		switch (cmd) {
 		case VME_GET_MASTER:
-			memset(&master, 0, sizeof(master));
+			memset(&master, 0, sizeof(struct vme_master));
 
 			/* XXX	We do not want to push aspace, cycle and width
 			 *	to userspace as they are
@@ -335,8 +334,8 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 						&master.cycle, &master.dwidth);
 
 			copied = copy_to_user(argp, &master,
-					      sizeof(master));
-			if (copied) {
+					      sizeof(struct vme_master));
+			if (copied != 0) {
 				pr_warn("Partial copy to userspace\n");
 				return -EFAULT;
 			}
@@ -351,7 +350,7 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 			}
 
 			copied = copy_from_user(&master, argp, sizeof(master));
-			if (copied) {
+			if (copied != 0) {
 				pr_warn("Partial copy from userspace\n");
 				return -EFAULT;
 			}
@@ -369,7 +368,7 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 	case SLAVE_MINOR:
 		switch (cmd) {
 		case VME_GET_SLAVE:
-			memset(&slave, 0, sizeof(slave));
+			memset(&slave, 0, sizeof(struct vme_slave));
 
 			/* XXX	We do not want to push aspace, cycle and width
 			 *	to userspace as they are
@@ -380,8 +379,8 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 					       &slave.aspace, &slave.cycle);
 
 			copied = copy_to_user(argp, &slave,
-					      sizeof(slave));
-			if (copied) {
+					      sizeof(struct vme_slave));
+			if (copied != 0) {
 				pr_warn("Partial copy to userspace\n");
 				return -EFAULT;
 			}
@@ -391,7 +390,7 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 		case VME_SET_SLAVE:
 
 			copied = copy_from_user(&slave, argp, sizeof(slave));
-			if (copied) {
+			if (copied != 0) {
 				pr_warn("Partial copy from userspace\n");
 				return -EFAULT;
 			}
@@ -430,7 +429,7 @@ static void vme_user_vm_open(struct vm_area_struct *vma)
 {
 	struct vme_user_vma_priv *vma_priv = vma->vm_private_data;
 
-	refcount_inc(&vma_priv->refcnt);
+	atomic_inc(&vma_priv->refcnt);
 }
 
 static void vme_user_vm_close(struct vm_area_struct *vma)
@@ -438,7 +437,7 @@ static void vme_user_vm_close(struct vm_area_struct *vma)
 	struct vme_user_vma_priv *vma_priv = vma->vm_private_data;
 	unsigned int minor = vma_priv->minor;
 
-	if (!refcount_dec_and_test(&vma_priv->refcnt))
+	if (!atomic_dec_and_test(&vma_priv->refcnt))
 		return;
 
 	mutex_lock(&image[minor].mutex);
@@ -473,7 +472,7 @@ static int vme_user_master_mmap(unsigned int minor, struct vm_area_struct *vma)
 	}
 
 	vma_priv->minor = minor;
-	refcount_set(&vma_priv->refcnt, 1);
+	atomic_set(&vma_priv->refcnt, 1);
 	vma->vm_ops = &vme_user_vm_ops;
 	vma->vm_private_data = vma_priv;
 
@@ -662,7 +661,7 @@ err_sysfs:
 	}
 	class_destroy(vme_user_sysfs_class);
 
-	/* Ensure counter set correctly to unalloc all master windows */
+	/* Ensure counter set correcty to unalloc all master windows */
 	i = MASTER_MAX + 1;
 err_master:
 	while (i > MASTER_MINOR) {
@@ -672,7 +671,7 @@ err_master:
 	}
 
 	/*
-	 * Ensure counter set correctly to unalloc all slave windows and buffers
+	 * Ensure counter set correcty to unalloc all slave windows and buffers
 	 */
 	i = SLAVE_MAX + 1;
 err_slave:
@@ -717,7 +716,7 @@ static int vme_user_remove(struct vme_dev *dev)
 	/* Unregister device driver */
 	cdev_del(vme_user_cdev);
 
-	/* Unregister the major and minor device numbers */
+	/* Unregiser the major and minor device numbers */
 	unregister_chrdev_region(MKDEV(VME_MAJOR, 0), VME_DEVS);
 
 	return 0;
@@ -758,7 +757,7 @@ static int __init vme_user_init(void)
 	 * we just change the code in vme_user_match().
 	 */
 	retval = vme_register_driver(&vme_user_driver, VME_MAX_SLOTS);
-	if (retval)
+	if (retval != 0)
 		goto err_reg;
 
 	return retval;
@@ -774,7 +773,7 @@ static void __exit vme_user_exit(void)
 }
 
 MODULE_PARM_DESC(bus, "Enumeration of VMEbus to which the driver is connected");
-module_param_array(bus, int, &bus_num, 0000);
+module_param_array(bus, int, &bus_num, 0);
 
 MODULE_DESCRIPTION("VME User Space Access Driver");
 MODULE_AUTHOR("Martyn Welch <martyn.welch@ge.com");

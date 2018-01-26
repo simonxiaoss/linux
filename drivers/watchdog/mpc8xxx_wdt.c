@@ -23,6 +23,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/timer.h>
+#include <linux/miscdevice.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/module.h>
@@ -80,9 +81,9 @@ static void mpc8xxx_wdt_keepalive(struct mpc8xxx_wdt_ddata *ddata)
 	spin_unlock(&ddata->lock);
 }
 
-static void mpc8xxx_wdt_timer_ping(struct timer_list *t)
+static void mpc8xxx_wdt_timer_ping(unsigned long arg)
 {
-	struct mpc8xxx_wdt_ddata *ddata = from_timer(ddata, t, timer);
+	struct mpc8xxx_wdt_ddata *ddata = (void *)arg;
 
 	mpc8xxx_wdt_keepalive(ddata);
 	/* We're pinging it twice faster than needed, just to be sure. */
@@ -173,7 +174,8 @@ static int mpc8xxx_wdt_probe(struct platform_device *ofdev)
 	}
 
 	spin_lock_init(&ddata->lock);
-	timer_setup(&ddata->timer, mpc8xxx_wdt_timer_ping, 0);
+	setup_timer(&ddata->timer, mpc8xxx_wdt_timer_ping,
+		    (unsigned long)ddata);
 
 	ddata->wdd.info = &mpc8xxx_wdt_info,
 	ddata->wdd.ops = &mpc8xxx_wdt_ops,

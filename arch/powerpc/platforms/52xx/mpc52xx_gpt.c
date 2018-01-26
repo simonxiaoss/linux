@@ -226,7 +226,7 @@ static int mpc52xx_gpt_irq_xlate(struct irq_domain *h, struct device_node *ct,
 	dev_dbg(gpt->dev, "%s: flags=%i\n", __func__, intspec[0]);
 
 	if ((intsize < 1) || (intspec[0] > 3)) {
-		dev_err(gpt->dev, "bad irq specifier in %pOF\n", ct);
+		dev_err(gpt->dev, "bad irq specifier in %s\n", ct->full_name);
 		return -EINVAL;
 	}
 
@@ -278,9 +278,14 @@ mpc52xx_gpt_irq_setup(struct mpc52xx_gpt_priv *gpt, struct device_node *node)
  * GPIOLIB hooks
  */
 #if defined(CONFIG_GPIOLIB)
+static inline struct mpc52xx_gpt_priv *gc_to_mpc52xx_gpt(struct gpio_chip *gc)
+{
+	return container_of(gc, struct mpc52xx_gpt_priv, gc);
+}
+
 static int mpc52xx_gpt_gpio_get(struct gpio_chip *gc, unsigned int gpio)
 {
-	struct mpc52xx_gpt_priv *gpt = gpiochip_get_data(gc);
+	struct mpc52xx_gpt_priv *gpt = gc_to_mpc52xx_gpt(gc);
 
 	return (in_be32(&gpt->regs->status) >> 8) & 1;
 }
@@ -288,7 +293,7 @@ static int mpc52xx_gpt_gpio_get(struct gpio_chip *gc, unsigned int gpio)
 static void
 mpc52xx_gpt_gpio_set(struct gpio_chip *gc, unsigned int gpio, int v)
 {
-	struct mpc52xx_gpt_priv *gpt = gpiochip_get_data(gc);
+	struct mpc52xx_gpt_priv *gpt = gc_to_mpc52xx_gpt(gc);
 	unsigned long flags;
 	u32 r;
 
@@ -302,7 +307,7 @@ mpc52xx_gpt_gpio_set(struct gpio_chip *gc, unsigned int gpio, int v)
 
 static int mpc52xx_gpt_gpio_dir_in(struct gpio_chip *gc, unsigned int gpio)
 {
-	struct mpc52xx_gpt_priv *gpt = gpiochip_get_data(gc);
+	struct mpc52xx_gpt_priv *gpt = gc_to_mpc52xx_gpt(gc);
 	unsigned long flags;
 
 	dev_dbg(gpt->dev, "%s: gpio:%d\n", __func__, gpio);
@@ -331,7 +336,7 @@ mpc52xx_gpt_gpio_setup(struct mpc52xx_gpt_priv *gpt, struct device_node *node)
 	if (!of_find_property(node, "gpio-controller", NULL))
 		return;
 
-	gpt->gc.label = kasprintf(GFP_KERNEL, "%pOF", node);
+	gpt->gc.label = kstrdup(node->full_name, GFP_KERNEL);
 	if (!gpt->gc.label) {
 		dev_err(gpt->dev, "out of memory\n");
 		return;
@@ -349,9 +354,9 @@ mpc52xx_gpt_gpio_setup(struct mpc52xx_gpt_priv *gpt, struct device_node *node)
 	clrsetbits_be32(&gpt->regs->mode, MPC52xx_GPT_MODE_MS_MASK,
 			MPC52xx_GPT_MODE_MS_GPIO);
 
-	rc = gpiochip_add_data(&gpt->gc, gpt);
+	rc = gpiochip_add(&gpt->gc);
 	if (rc)
-		dev_err(gpt->dev, "gpiochip_add_data() failed; rc=%i\n", rc);
+		dev_err(gpt->dev, "gpiochip_add() failed; rc=%i\n", rc);
 
 	dev_dbg(gpt->dev, "%s() complete.\n", __func__);
 }

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -16,6 +15,7 @@
 #include <asm/pgtable.h>
 #include <asm/apollohw.h>
 #include <asm/irq.h>
+#include <asm/rtc.h>
 #include <asm/machdep.h>
 
 u_long sio01_physaddr;

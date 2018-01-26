@@ -15,6 +15,10 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 
@@ -749,7 +753,7 @@ static const struct v4l2_ioctl_ops si470x_ioctl_ops = {
 /*
  * si470x_viddev_template - video device interface
  */
-const struct video_device si470x_viddev_template = {
+struct video_device si470x_viddev_template = {
 	.fops			= &si470x_fops,
 	.name			= DRIVER_NAME,
 	.release		= video_device_release_empty,

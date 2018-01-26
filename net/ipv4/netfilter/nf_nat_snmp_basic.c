@@ -827,8 +827,8 @@ static unsigned char snmp_object_decode(struct asn1_ctx *ctx,
 	return 1;
 }
 
-static unsigned char noinline_for_stack
-snmp_request_decode(struct asn1_ctx *ctx, struct snmp_request *request)
+static unsigned char snmp_request_decode(struct asn1_ctx *ctx,
+					 struct snmp_request *request)
 {
 	unsigned int cls, con, tag;
 	unsigned char *end;
@@ -920,10 +920,10 @@ static inline void mangle_address(unsigned char *begin,
 	}
 }
 
-static unsigned char noinline_for_stack
-snmp_trap_decode(struct asn1_ctx *ctx, struct snmp_v1_trap *trap,
-		 const struct oct1_map *map,
-		 __sum16 *check)
+static unsigned char snmp_trap_decode(struct asn1_ctx *ctx,
+				      struct snmp_v1_trap *trap,
+				      const struct oct1_map *map,
+				      __sum16 *check)
 {
 	unsigned int cls, con, tag, len;
 	unsigned char *end;
@@ -998,6 +998,18 @@ err_id_free:
  *
  *****************************************************************************/
 
+static void hex_dump(const unsigned char *buf, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		if (i && !(i % 16))
+			printk("\n");
+		printk("%02x ", *(buf + i));
+	}
+	printk("\n");
+}
+
 /*
  * Parse and mangle SNMP message according to mapping.
  * (And this is the fucking 'basic' method).
@@ -1014,8 +1026,7 @@ static int snmp_parse_mangle(unsigned char *msg,
 	struct snmp_object *obj;
 
 	if (debug > 1)
-		print_hex_dump(KERN_DEBUG, "", DUMP_PREFIX_NONE, 16, 1,
-			       msg, len, 0);
+		hex_dump(msg, len);
 
 	asn1_open(&ctx, msg, len);
 
@@ -1037,7 +1048,7 @@ static int snmp_parse_mangle(unsigned char *msg,
 	if (!asn1_uint_decode (&ctx, end, &vers))
 		return 0;
 	if (debug > 1)
-		pr_debug("bsalg: snmp version: %u\n", vers + 1);
+		printk(KERN_DEBUG "bsalg: snmp version: %u\n", vers + 1);
 	if (vers > 1)
 		return 1;
 
@@ -1053,10 +1064,10 @@ static int snmp_parse_mangle(unsigned char *msg,
 	if (debug > 1) {
 		unsigned int i;
 
-		pr_debug("bsalg: community: ");
+		printk(KERN_DEBUG "bsalg: community: ");
 		for (i = 0; i < comm.len; i++)
-			pr_cont("%c", comm.data[i]);
-		pr_cont("\n");
+			printk("%c", comm.data[i]);
+		printk("\n");
 	}
 	kfree(comm.data);
 
@@ -1080,9 +1091,9 @@ static int snmp_parse_mangle(unsigned char *msg,
 		};
 
 		if (pdutype > SNMP_PDU_TRAP2)
-			pr_debug("bsalg: bad pdu type %u\n", pdutype);
+			printk(KERN_DEBUG "bsalg: bad pdu type %u\n", pdutype);
 		else
-			pr_debug("bsalg: pdu: %s\n", pdus[pdutype]);
+			printk(KERN_DEBUG "bsalg: pdu: %s\n", pdus[pdutype]);
 	}
 	if (pdutype != SNMP_PDU_RESPONSE &&
 	    pdutype != SNMP_PDU_TRAP1 && pdutype != SNMP_PDU_TRAP2)
@@ -1108,7 +1119,7 @@ static int snmp_parse_mangle(unsigned char *msg,
 			return 0;
 
 		if (debug > 1)
-			pr_debug("bsalg: request: id=0x%lx error_status=%u "
+			printk(KERN_DEBUG "bsalg: request: id=0x%lx error_status=%u "
 			"error_index=%u\n", req.id, req.error_status,
 			req.error_index);
 	}
@@ -1134,13 +1145,13 @@ static int snmp_parse_mangle(unsigned char *msg,
 		}
 
 		if (debug > 1) {
-			pr_debug("bsalg: object: ");
+			printk(KERN_DEBUG "bsalg: object: ");
 			for (i = 0; i < obj->id_len; i++) {
 				if (i > 0)
-					pr_cont(".");
-				pr_cont("%lu", obj->id[i]);
+					printk(".");
+				printk("%lu", obj->id[i]);
 			}
-			pr_cont(": type=%u\n", obj->type);
+			printk(": type=%u\n", obj->type);
 
 		}
 

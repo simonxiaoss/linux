@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * xfrm4_policy.c
  *
@@ -18,19 +17,19 @@
 #include <net/ip.h>
 #include <net/l3mdev.h>
 
+static struct xfrm_policy_afinfo xfrm4_policy_afinfo;
+
 static struct dst_entry *__xfrm4_dst_lookup(struct net *net, struct flowi4 *fl4,
 					    int tos, int oif,
 					    const xfrm_address_t *saddr,
-					    const xfrm_address_t *daddr,
-					    u32 mark)
+					    const xfrm_address_t *daddr)
 {
 	struct rtable *rt;
 
 	memset(fl4, 0, sizeof(*fl4));
 	fl4->daddr = daddr->a4;
 	fl4->flowi4_tos = tos;
-	fl4->flowi4_oif = l3mdev_master_ifindex_by_index(net, oif);
-	fl4->flowi4_mark = mark;
+	fl4->flowi4_oif = oif;
 	if (saddr)
 		fl4->saddr = saddr->a4;
 
@@ -45,22 +44,20 @@ static struct dst_entry *__xfrm4_dst_lookup(struct net *net, struct flowi4 *fl4,
 
 static struct dst_entry *xfrm4_dst_lookup(struct net *net, int tos, int oif,
 					  const xfrm_address_t *saddr,
-					  const xfrm_address_t *daddr,
-					  u32 mark)
+					  const xfrm_address_t *daddr)
 {
 	struct flowi4 fl4;
 
-	return __xfrm4_dst_lookup(net, &fl4, tos, oif, saddr, daddr, mark);
+	return __xfrm4_dst_lookup(net, &fl4, tos, oif, saddr, daddr);
 }
 
 static int xfrm4_get_saddr(struct net *net, int oif,
-			   xfrm_address_t *saddr, xfrm_address_t *daddr,
-			   u32 mark)
+			   xfrm_address_t *saddr, xfrm_address_t *daddr)
 {
 	struct dst_entry *dst;
 	struct flowi4 fl4;
 
-	dst = __xfrm4_dst_lookup(net, &fl4, 0, oif, NULL, daddr, mark);
+	dst = __xfrm4_dst_lookup(net, &fl4, 0, oif, NULL, daddr);
 	if (IS_ERR(dst))
 		return -EHOSTUNREACH;
 
@@ -115,7 +112,7 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
 	int oif = 0;
 
 	if (skb_dst(skb))
-		oif = skb_dst(skb)->dev->ifindex;
+		oif = l3mdev_fib_oif(skb_dst(skb)->dev);
 
 	memset(fl4, 0, sizeof(struct flowi4));
 	fl4->flowi4_mark = skb->mark;
@@ -218,6 +215,14 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
 	fl4->flowi4_tos = iph->tos;
 }
 
+static inline int xfrm4_garbage_collect(struct dst_ops *ops)
+{
+	struct net *net = container_of(ops, struct net, xfrm.xfrm4_dst_ops);
+
+	xfrm4_policy_afinfo.garbage_collect(net);
+	return (dst_entries_get_slow(ops) > ops->gc_thresh * 2);
+}
+
 static void xfrm4_update_pmtu(struct dst_entry *dst, struct sock *sk,
 			      struct sk_buff *skb, u32 mtu)
 {
@@ -256,16 +261,18 @@ static void xfrm4_dst_ifdown(struct dst_entry *dst, struct net_device *dev,
 
 static struct dst_ops xfrm4_dst_ops_template = {
 	.family =		AF_INET,
+	.gc =			xfrm4_garbage_collect,
 	.update_pmtu =		xfrm4_update_pmtu,
 	.redirect =		xfrm4_redirect,
 	.cow_metrics =		dst_cow_metrics_generic,
 	.destroy =		xfrm4_dst_destroy,
 	.ifdown =		xfrm4_dst_ifdown,
 	.local_out =		__ip_local_out,
-	.gc_thresh =		32768,
+	.gc_thresh =		INT_MAX,
 };
 
-static const struct xfrm_policy_afinfo xfrm4_policy_afinfo = {
+static struct xfrm_policy_afinfo xfrm4_policy_afinfo = {
+	.family = 		AF_INET,
 	.dst_ops =		&xfrm4_dst_ops_template,
 	.dst_lookup =		xfrm4_dst_lookup,
 	.get_saddr =		xfrm4_get_saddr,
@@ -288,7 +295,7 @@ static struct ctl_table xfrm4_policy_table[] = {
 	{ }
 };
 
-static __net_init int xfrm4_net_sysctl_init(struct net *net)
+static int __net_init xfrm4_net_sysctl_init(struct net *net)
 {
 	struct ctl_table *table;
 	struct ctl_table_header *hdr;
@@ -316,7 +323,7 @@ err_alloc:
 	return -ENOMEM;
 }
 
-static __net_exit void xfrm4_net_sysctl_exit(struct net *net)
+static void __net_exit xfrm4_net_sysctl_exit(struct net *net)
 {
 	struct ctl_table *table;
 
@@ -329,12 +336,12 @@ static __net_exit void xfrm4_net_sysctl_exit(struct net *net)
 		kfree(table);
 }
 #else /* CONFIG_SYSCTL */
-static inline int xfrm4_net_sysctl_init(struct net *net)
+static int inline xfrm4_net_sysctl_init(struct net *net)
 {
 	return 0;
 }
 
-static inline void xfrm4_net_sysctl_exit(struct net *net)
+static void inline xfrm4_net_sysctl_exit(struct net *net)
 {
 }
 #endif
@@ -369,7 +376,7 @@ static struct pernet_operations __net_initdata xfrm4_net_ops = {
 
 static void __init xfrm4_policy_init(void)
 {
-	xfrm_policy_register_afinfo(&xfrm4_policy_afinfo, AF_INET);
+	xfrm_policy_register_afinfo(&xfrm4_policy_afinfo);
 }
 
 void __init xfrm4_init(void)

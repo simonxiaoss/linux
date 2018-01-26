@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  *	drivers/pci/setup-res.c
  *
@@ -64,7 +63,7 @@ static void pci_std_update_resource(struct pci_dev *dev, int resno)
 		mask = (u32)PCI_BASE_ADDRESS_IO_MASK;
 		new |= res->flags & ~PCI_BASE_ADDRESS_IO_MASK;
 	} else if (resno == PCI_ROM_RESOURCE) {
-		mask = PCI_ROM_ADDRESS_MASK;
+		mask = (u32)PCI_ROM_ADDRESS_MASK;
 	} else {
 		mask = (u32)PCI_BASE_ADDRESS_MEM_MASK;
 		new |= res->flags & ~PCI_BASE_ADDRESS_MEM_MASK;
@@ -141,14 +140,6 @@ int pci_claim_resource(struct pci_dev *dev, int resource)
 			 resource, res);
 		return -EINVAL;
 	}
-
-	/*
-	 * If we have a shadow copy in RAM, the PCI device doesn't respond
-	 * to the shadow range, so we don't need to claim it, and upstream
-	 * bridges don't need to route the range to the device.
-	 */
-	if (res->flags & IORESOURCE_ROM_SHADOW)
-		return 0;
 
 	root = pci_find_parent_resource(dev, res);
 	if (!root) {
@@ -235,19 +226,6 @@ static int pci_revert_fw_address(struct resource *res, struct pci_dev *dev,
 	return 0;
 }
 
-/*
- * We don't have to worry about legacy ISA devices, so nothing to do here.
- * This is marked as __weak because multiple architectures define it; it should
- * eventually go away.
- */
-resource_size_t __weak pcibios_align_resource(void *data,
-					      const struct resource *res,
-					      resource_size_t size,
-					      resource_size_t align)
-{
-       return res->start;
-}
-
 static int __pci_assign_resource(struct pci_bus *bus, struct pci_dev *dev,
 		int resno, resource_size_t size, resource_size_t align)
 {
@@ -318,9 +296,6 @@ int pci_assign_resource(struct pci_dev *dev, int resno)
 	resource_size_t align, size;
 	int ret;
 
-	if (res->flags & IORESOURCE_PCI_FIXED)
-		return 0;
-
 	res->flags |= IORESOURCE_UNSET;
 	align = pci_resource_alignment(dev, res);
 	if (!align) {
@@ -366,9 +341,6 @@ int pci_reassign_resource(struct pci_dev *dev, int resno, resource_size_t addsiz
 	resource_size_t new_size;
 	int ret;
 
-	if (res->flags & IORESOURCE_PCI_FIXED)
-		return 0;
-
 	flags = res->flags;
 	res->flags |= IORESOURCE_UNSET;
 	if (!res->parent) {
@@ -396,64 +368,6 @@ int pci_reassign_resource(struct pci_dev *dev, int resno, resource_size_t addsiz
 
 	return 0;
 }
-
-void pci_release_resource(struct pci_dev *dev, int resno)
-{
-	struct resource *res = dev->resource + resno;
-
-	dev_info(&dev->dev, "BAR %d: releasing %pR\n", resno, res);
-	release_resource(res);
-	res->end = resource_size(res) - 1;
-	res->start = 0;
-	res->flags |= IORESOURCE_UNSET;
-}
-EXPORT_SYMBOL(pci_release_resource);
-
-int pci_resize_resource(struct pci_dev *dev, int resno, int size)
-{
-	struct resource *res = dev->resource + resno;
-	int old, ret;
-	u32 sizes;
-	u16 cmd;
-
-	/* Make sure the resource isn't assigned before resizing it. */
-	if (!(res->flags & IORESOURCE_UNSET))
-		return -EBUSY;
-
-	pci_read_config_word(dev, PCI_COMMAND, &cmd);
-	if (cmd & PCI_COMMAND_MEMORY)
-		return -EBUSY;
-
-	sizes = pci_rebar_get_possible_sizes(dev, resno);
-	if (!sizes)
-		return -ENOTSUPP;
-
-	if (!(sizes & BIT(size)))
-		return -EINVAL;
-
-	old = pci_rebar_get_current_size(dev, resno);
-	if (old < 0)
-		return old;
-
-	ret = pci_rebar_set_size(dev, resno, size);
-	if (ret)
-		return ret;
-
-	res->end = res->start + pci_rebar_size_to_bytes(size) - 1;
-
-	/* Check if the new config works by trying to assign everything. */
-	ret = pci_reassign_bridge_resources(dev->bus->self, res->flags);
-	if (ret)
-		goto error_resize;
-
-	return 0;
-
-error_resize:
-	pci_rebar_set_size(dev, resno, old);
-	res->end = res->start + pci_rebar_size_to_bytes(old) - 1;
-	return ret;
-}
-EXPORT_SYMBOL(pci_resize_resource);
 
 int pci_enable_resources(struct pci_dev *dev, int mask)
 {

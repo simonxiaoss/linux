@@ -27,7 +27,6 @@
 #include <linux/module.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
 #include <linux/platform_device.h>
 #include <linux/async.h>
 #include <linux/i2c.h>
@@ -299,7 +298,7 @@ static u16 elants_i2c_parse_version(u8 *buf)
 	return get_unaligned_be32(buf) >> 4;
 }
 
-static int elants_i2c_query_hw_version(struct elants_data *ts)
+static int elants_i2c_query_fw_id(struct elants_data *ts)
 {
 	struct i2c_client *client = ts->client;
 	int error, retry_cnt;
@@ -319,13 +318,8 @@ static int elants_i2c_query_hw_version(struct elants_data *ts)
 			error, (int)sizeof(resp), resp);
 	}
 
-	if (error) {
-		dev_err(&client->dev,
-			"Failed to read fw id: %d\n", error);
-		return error;
-	}
-
-	dev_err(&client->dev, "Invalid fw id: %#04x\n", ts->hw_version);
+	dev_err(&client->dev,
+		"Failed to read fw id or fw id is invalid\n");
 
 	return -EINVAL;
 }
@@ -514,7 +508,7 @@ static int elants_i2c_fastboot(struct i2c_client *client)
 static int elants_i2c_initialize(struct elants_data *ts)
 {
 	struct i2c_client *client = ts->client;
-	int error, error2, retry_cnt;
+	int error, retry_cnt;
 	const u8 hello_packet[] = { 0x55, 0x55, 0x55, 0x55 };
 	const u8 recov_packet[] = { 0x55, 0x55, 0x80, 0x80 };
 	u8 buf[HEADER_SIZE];
@@ -559,22 +553,18 @@ static int elants_i2c_initialize(struct elants_data *ts)
 		}
 	}
 
-	/* hw version is available even if device in recovery state */
-	error2 = elants_i2c_query_hw_version(ts);
 	if (!error)
-		error = error2;
-
+		error = elants_i2c_query_fw_id(ts);
 	if (!error)
 		error = elants_i2c_query_fw_version(ts);
-	if (!error)
-		error = elants_i2c_query_test_version(ts);
-	if (!error)
-		error = elants_i2c_query_bc_version(ts);
-	if (!error)
-		error = elants_i2c_query_ts_info(ts);
 
-	if (error)
+	if (error) {
 		ts->iap_mode = ELAN_IAP_RECOVERY;
+	} else {
+		elants_i2c_query_test_version(ts);
+		elants_i2c_query_bc_version(ts);
+		elants_i2c_query_ts_info(ts);
+	}
 
 	return 0;
 }
@@ -1067,9 +1057,16 @@ static struct attribute *elants_attributes[] = {
 	NULL
 };
 
-static const struct attribute_group elants_attribute_group = {
+static struct attribute_group elants_attribute_group = {
 	.attrs = elants_attributes,
 };
+
+static void elants_i2c_remove_sysfs_group(void *_data)
+{
+	struct elants_data *ts = _data;
+
+	sysfs_remove_group(&ts->client->dev.kobj, &elants_attribute_group);
+}
 
 static int elants_i2c_power_on(struct elants_data *ts)
 {
@@ -1254,6 +1251,8 @@ static int elants_i2c_probe(struct i2c_client *client,
 	input_abs_set_res(ts->input, ABS_MT_POSITION_X, ts->x_res);
 	input_abs_set_res(ts->input, ABS_MT_POSITION_Y, ts->y_res);
 
+	input_set_drvdata(ts->input, ts);
+
 	error = input_register_device(ts->input);
 	if (error) {
 		dev_err(&client->dev,
@@ -1262,13 +1261,10 @@ static int elants_i2c_probe(struct i2c_client *client,
 	}
 
 	/*
-	 * Platform code (ACPI, DTS) should normally set up interrupt
-	 * for us, but in case it did not let's fall back to using falling
-	 * edge to be compatible with older Chromebooks.
+	 * Systems using device tree should set up interrupt via DTS,
+	 * the rest will use the default falling edge interrupts.
 	 */
-	irqflags = irq_get_trigger_type(client->irq);
-	if (!irqflags)
-		irqflags = IRQF_TRIGGER_FALLING;
+	irqflags = client->dev.of_node ? 0 : IRQF_TRIGGER_FALLING;
 
 	error = devm_request_threaded_irq(&client->dev, client->irq,
 					  NULL, elants_i2c_irq,
@@ -1286,9 +1282,19 @@ static int elants_i2c_probe(struct i2c_client *client,
 	if (!client->dev.of_node)
 		device_init_wakeup(&client->dev, true);
 
-	error = devm_device_add_group(&client->dev, &elants_attribute_group);
+	error = sysfs_create_group(&client->dev.kobj, &elants_attribute_group);
 	if (error) {
 		dev_err(&client->dev, "failed to create sysfs attributes: %d\n",
+			error);
+		return error;
+	}
+
+	error = devm_add_action(&client->dev,
+				elants_i2c_remove_sysfs_group, ts);
+	if (error) {
+		elants_i2c_remove_sysfs_group(ts);
+		dev_err(&client->dev,
+			"Failed to add sysfs cleanup action: %d\n",
 			error);
 		return error;
 	}

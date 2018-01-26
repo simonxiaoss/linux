@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2005-2007 Takahiro Hirofuchi
  */
@@ -26,12 +25,9 @@
 #define VHCI_STATE_PATH "/var/run/vhci_hcd"
 #endif
 
-#define VUDC_DEVICE_DESCR_FILE "dev_desc"
-
 /* kernel module names */
 #define USBIP_CORE_MOD_NAME	"usbip-core"
 #define USBIP_HOST_DRV_NAME	"usbip-host"
-#define USBIP_DEVICE_DRV_NAME	"usbip-vudc"
 #define USBIP_VHCI_DRV_NAME	"vhci_hcd"
 
 /* sysfs constants */

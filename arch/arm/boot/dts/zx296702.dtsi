@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 
 #include "skeleton.dtsi"
 #include <dt-bindings/clock/zx296702-clock.h>
@@ -38,7 +37,7 @@
 			reg = <0x00400000 0x1000>;
 		};
 
-		intc: interrupt-controller@801000 {
+		intc: interrupt-controller@00801000 {
 			compatible = "arm,cortex-a9-gic";
 			#interrupt-cells = <3>;
 			#address-cells = <1>;
@@ -48,7 +47,7 @@
 			      <0x00800100 0x100>;
 		};
 
-		global_timer: timer@8000200 {
+		global_timer: timer@008000200 {
 			compatible = "arm,cortex-a9-global-timer";
 			reg = <0x00800200 0x20>;
 			interrupts = <GIC_PPI 11 IRQ_TYPE_LEVEL_HIGH>;

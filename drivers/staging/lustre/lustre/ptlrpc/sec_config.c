@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * GPL HEADER START
  *
@@ -16,7 +15,11 @@
  *
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
- * http://www.gnu.org/licenses/gpl-2.0.html
+ * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
+ *
+ * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
+ * CA 95054 USA or visit www.sun.com if you need additional information or
+ * have any questions.
  *
  * GPL HEADER END
  */
@@ -24,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2015, Intel Corporation.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -33,16 +36,15 @@
 
 #define DEBUG_SUBSYSTEM S_SEC
 
-#include <linux/libcfs/libcfs.h>
+#include "../../include/linux/libcfs/libcfs.h"
 #include <linux/crypto.h>
 #include <linux/key.h>
 
-#include <obd.h>
-#include <obd_class.h>
-#include <obd_support.h>
-#include <lustre_import.h>
-#include <uapi/linux/lustre/lustre_param.h>
-#include <lustre_sec.h>
+#include "../include/obd.h"
+#include "../include/obd_support.h"
+#include "../include/lustre_import.h"
+#include "../include/lustre_param.h"
+#include "../include/lustre_sec.h"
 
 #include "ptlrpc_internal.h"
 
@@ -60,6 +62,7 @@ enum lustre_sec_part sptlrpc_target_sec_part(struct obd_device *obd)
 	CERROR("unknown target %p(%s)\n", obd, type);
 	return LUSTRE_SP_ANY;
 }
+EXPORT_SYMBOL(sptlrpc_target_sec_part);
 
 /****************************************
  * user supplied flavor string parsing  *
@@ -75,12 +78,13 @@ int sptlrpc_parse_flavor(const char *str, struct sptlrpc_flavor *flvr)
 
 	memset(flvr, 0, sizeof(*flvr));
 
-	if (!str || str[0] == '\0') {
+	if (str == NULL || str[0] == '\0') {
 		flvr->sf_rpc = SPTLRPC_FLVR_INVALID;
 		return 0;
 	}
 
-	strlcpy(buf, str, sizeof(buf));
+	strncpy(buf, str, sizeof(buf));
+	buf[sizeof(buf) - 1] = '\0';
 
 	bulk = strchr(buf, '-');
 	if (bulk)
@@ -100,7 +104,7 @@ int sptlrpc_parse_flavor(const char *str, struct sptlrpc_flavor *flvr)
 			 * format: plain-hash:<hash_alg>
 			 */
 			alg = strchr(bulk, ':');
-			if (!alg)
+			if (alg == NULL)
 				goto err_out;
 			*alg++ = '\0';
 
@@ -163,7 +167,7 @@ static int sptlrpc_parse_rule(char *param, struct sptlrpc_rule *rule)
 	sptlrpc_rule_init(rule);
 
 	flavor = strchr(param, '=');
-	if (!flavor) {
+	if (flavor == NULL) {
 		CERROR("invalid param, no '='\n");
 		return -EINVAL;
 	}
@@ -213,7 +217,7 @@ static int sptlrpc_parse_rule(char *param, struct sptlrpc_rule *rule)
 static void sptlrpc_rule_set_free(struct sptlrpc_rule_set *rset)
 {
 	LASSERT(rset->srs_nslot ||
-		(rset->srs_nrule == 0 && !rset->srs_rules));
+		(rset->srs_nrule == 0 && rset->srs_rules == NULL));
 
 	if (rset->srs_nslot) {
 		kfree(rset->srs_rules);
@@ -238,7 +242,7 @@ static int sptlrpc_rule_set_expand(struct sptlrpc_rule_set *rset)
 
 	/* better use realloc() if available */
 	rules = kcalloc(nslot, sizeof(*rset->srs_rules), GFP_NOFS);
-	if (!rules)
+	if (rules == NULL)
 		return -ENOMEM;
 
 	if (rset->srs_nrule) {
@@ -447,7 +451,7 @@ static void target2fsname(const char *tgt, char *fsname, int buflen)
 	}
 
 	/* if we didn't find the pattern, treat the whole string as fsname */
-	if (!ptr)
+	if (ptr == NULL)
 		len = strlen(tgt);
 	else
 		len = ptr - tgt;
@@ -464,7 +468,7 @@ static void sptlrpc_conf_free_rsets(struct sptlrpc_conf *conf)
 	sptlrpc_rule_set_free(&conf->sc_rset);
 
 	list_for_each_entry_safe(conf_tgt, conf_tgt_next,
-				 &conf->sc_tgts, sct_list) {
+				     &conf->sc_tgts, sct_list) {
 		sptlrpc_rule_set_free(&conf_tgt->sct_rset);
 		list_del(&conf_tgt->sct_list);
 		kfree(conf_tgt);
@@ -514,7 +518,6 @@ struct sptlrpc_conf *sptlrpc_conf_get(const char *fsname,
 				      int create)
 {
 	struct sptlrpc_conf *conf;
-	size_t len;
 
 	list_for_each_entry(conf, &sptlrpc_confs, sc_list) {
 		if (strcmp(conf->sc_fsname, fsname) == 0)
@@ -528,11 +531,7 @@ struct sptlrpc_conf *sptlrpc_conf_get(const char *fsname,
 	if (!conf)
 		return NULL;
 
-	len = strlcpy(conf->sc_fsname, fsname, sizeof(conf->sc_fsname));
-	if (len >= sizeof(conf->sc_fsname)) {
-		kfree(conf);
-		return NULL;
-	}
+	strcpy(conf->sc_fsname, fsname);
 	sptlrpc_rule_set_init(&conf->sc_rset);
 	INIT_LIST_HEAD(&conf->sc_tgts);
 	list_add(&conf->sc_list, &sptlrpc_confs);
@@ -581,13 +580,13 @@ static int __sptlrpc_process_config(struct lustre_cfg *lcfg,
 	int rc;
 
 	target = lustre_cfg_string(lcfg, 1);
-	if (!target) {
+	if (target == NULL) {
 		CERROR("missing target name\n");
 		return -EINVAL;
 	}
 
 	param = lustre_cfg_string(lcfg, 2);
-	if (!param) {
+	if (param == NULL) {
 		CERROR("missing parameter\n");
 		return -EINVAL;
 	}
@@ -605,12 +604,12 @@ static int __sptlrpc_process_config(struct lustre_cfg *lcfg,
 	if (rc)
 		return -EINVAL;
 
-	if (!conf) {
+	if (conf == NULL) {
 		target2fsname(target, fsname, sizeof(fsname));
 
 		mutex_lock(&sptlrpc_conf_lock);
 		conf = sptlrpc_conf_get(fsname, 0);
-		if (!conf) {
+		if (conf == NULL) {
 			CERROR("can't find conf\n");
 			rc = -ENOMEM;
 		} else {
@@ -640,12 +639,12 @@ static int logname2fsname(const char *logname, char *buf, int buflen)
 	int len;
 
 	ptr = strrchr(logname, '-');
-	if (!ptr || strcmp(ptr, "-sptlrpc")) {
+	if (ptr == NULL || strcmp(ptr, "-sptlrpc")) {
 		CERROR("%s is not a sptlrpc config log\n", logname);
 		return -EINVAL;
 	}
 
-	len = min((int)(ptr - logname), buflen - 1);
+	len = min((int) (ptr - logname), buflen - 1);
 
 	memcpy(buf, logname, len);
 	buf[len] = '\0';
@@ -774,7 +773,7 @@ void sptlrpc_conf_choose_flavor(enum lustre_sec_part from,
 	mutex_lock(&sptlrpc_conf_lock);
 
 	conf = sptlrpc_conf_get(name, 0);
-	if (!conf)
+	if (conf == NULL)
 		goto out;
 
 	/* convert uuid name (supposed end with _UUID) to target name */
@@ -816,7 +815,7 @@ void sptlrpc_conf_client_adapt(struct obd_device *obd)
 	CDEBUG(D_SEC, "obd %s\n", obd->u.cli.cl_target_uuid.uuid);
 
 	/* serialize with connect/disconnect import */
-	down_read_nested(&obd->u.cli.cl_sem, OBD_CLI_SEM_MDCOSC);
+	down_read(&obd->u.cli.cl_sem);
 
 	imp = obd->u.cli.cl_import;
 	if (imp) {

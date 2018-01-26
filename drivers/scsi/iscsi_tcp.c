@@ -26,13 +26,12 @@
  *	Zhenyu Wang
  */
 
-#include <crypto/hash.h>
 #include <linux/types.h>
 #include <linux/inet.h>
 #include <linux/slab.h>
-#include <linux/sched/mm.h>
 #include <linux/file.h>
 #include <linux/blkdev.h>
+#include <linux/crypto.h>
 #include <linux/delay.h>
 #include <linux/kfifo.h>
 #include <linux/scatterlist.h>
@@ -132,10 +131,10 @@ static void iscsi_sw_tcp_data_ready(struct sock *sk)
 	struct iscsi_tcp_conn *tcp_conn;
 	read_descriptor_t rd_desc;
 
-	read_lock_bh(&sk->sk_callback_lock);
+	read_lock(&sk->sk_callback_lock);
 	conn = sk->sk_user_data;
 	if (!conn) {
-		read_unlock_bh(&sk->sk_callback_lock);
+		read_unlock(&sk->sk_callback_lock);
 		return;
 	}
 	tcp_conn = conn->dd_data;
@@ -155,7 +154,7 @@ static void iscsi_sw_tcp_data_ready(struct sock *sk)
 	/* If we had to (atomically) map a highmem page,
 	 * unmap it now. */
 	iscsi_tcp_segment_unmap(&tcp_conn->in.segment);
-	read_unlock_bh(&sk->sk_callback_lock);
+	read_unlock(&sk->sk_callback_lock);
 }
 
 static void iscsi_sw_tcp_state_change(struct sock *sk)
@@ -163,14 +162,16 @@ static void iscsi_sw_tcp_state_change(struct sock *sk)
 	struct iscsi_tcp_conn *tcp_conn;
 	struct iscsi_sw_tcp_conn *tcp_sw_conn;
 	struct iscsi_conn *conn;
+	struct iscsi_session *session;
 	void (*old_state_change)(struct sock *);
 
-	read_lock_bh(&sk->sk_callback_lock);
+	read_lock(&sk->sk_callback_lock);
 	conn = sk->sk_user_data;
 	if (!conn) {
-		read_unlock_bh(&sk->sk_callback_lock);
+		read_unlock(&sk->sk_callback_lock);
 		return;
 	}
+	session = conn->session;
 
 	iscsi_sw_sk_state_check(sk);
 
@@ -178,7 +179,7 @@ static void iscsi_sw_tcp_state_change(struct sock *sk)
 	tcp_sw_conn = tcp_conn->dd_data;
 	old_state_change = tcp_sw_conn->old_state_change;
 
-	read_unlock_bh(&sk->sk_callback_lock);
+	read_unlock(&sk->sk_callback_lock);
 
 	old_state_change(sk);
 }
@@ -370,10 +371,10 @@ static inline int iscsi_sw_tcp_xmit_qlen(struct iscsi_conn *conn)
 static int iscsi_sw_tcp_pdu_xmit(struct iscsi_task *task)
 {
 	struct iscsi_conn *conn = task->conn;
-	unsigned int noreclaim_flag;
+	unsigned long pflags = current->flags;
 	int rc = 0;
 
-	noreclaim_flag = memalloc_noreclaim_save();
+	current->flags |= PF_MEMALLOC;
 
 	while (iscsi_sw_tcp_xmit_qlen(conn)) {
 		rc = iscsi_sw_tcp_xmit(conn);
@@ -386,7 +387,7 @@ static int iscsi_sw_tcp_pdu_xmit(struct iscsi_task *task)
 		rc = 0;
 	}
 
-	memalloc_noreclaim_restore(noreclaim_flag);
+	tsk_restore_flags(current, pflags, PF_MEMALLOC);
 	return rc;
 }
 
@@ -427,7 +428,7 @@ static void iscsi_sw_tcp_send_hdr_prep(struct iscsi_conn *conn, void *hdr,
 	 * sufficient room.
 	 */
 	if (conn->hdrdgst_en) {
-		iscsi_tcp_dgst_header(tcp_sw_conn->tx_hash, hdr, hdrlen,
+		iscsi_tcp_dgst_header(&tcp_sw_conn->tx_hash, hdr, hdrlen,
 				      hdr + hdrlen);
 		hdrlen += ISCSI_DIGEST_SIZE;
 	}
@@ -453,7 +454,7 @@ iscsi_sw_tcp_send_data_prep(struct iscsi_conn *conn, struct scatterlist *sg,
 {
 	struct iscsi_tcp_conn *tcp_conn = conn->dd_data;
 	struct iscsi_sw_tcp_conn *tcp_sw_conn = tcp_conn->dd_data;
-	struct ahash_request *tx_hash = NULL;
+	struct hash_desc *tx_hash = NULL;
 	unsigned int hdr_spec_len;
 
 	ISCSI_SW_TCP_DBG(conn, "offset=%d, datalen=%d %s\n", offset, len,
@@ -466,7 +467,7 @@ iscsi_sw_tcp_send_data_prep(struct iscsi_conn *conn, struct scatterlist *sg,
 	WARN_ON(iscsi_padded(len) != iscsi_padded(hdr_spec_len));
 
 	if (conn->datadgst_en)
-		tx_hash = tcp_sw_conn->tx_hash;
+		tx_hash = &tcp_sw_conn->tx_hash;
 
 	return iscsi_segment_seek_sg(&tcp_sw_conn->out.data_segment,
 				     sg, count, offset, len,
@@ -479,7 +480,7 @@ iscsi_sw_tcp_send_linear_data_prep(struct iscsi_conn *conn, void *data,
 {
 	struct iscsi_tcp_conn *tcp_conn = conn->dd_data;
 	struct iscsi_sw_tcp_conn *tcp_sw_conn = tcp_conn->dd_data;
-	struct ahash_request *tx_hash = NULL;
+	struct hash_desc *tx_hash = NULL;
 	unsigned int hdr_spec_len;
 
 	ISCSI_SW_TCP_DBG(conn, "datalen=%zd %s\n", len, conn->datadgst_en ?
@@ -491,7 +492,7 @@ iscsi_sw_tcp_send_linear_data_prep(struct iscsi_conn *conn, void *data,
 	WARN_ON(iscsi_padded(len) != iscsi_padded(hdr_spec_len));
 
 	if (conn->datadgst_en)
-		tx_hash = tcp_sw_conn->tx_hash;
+		tx_hash = &tcp_sw_conn->tx_hash;
 
 	iscsi_segment_init_linear(&tcp_sw_conn->out.data_segment,
 				data, len, NULL, tx_hash);
@@ -542,7 +543,6 @@ iscsi_sw_tcp_conn_create(struct iscsi_cls_session *cls_session,
 	struct iscsi_cls_conn *cls_conn;
 	struct iscsi_tcp_conn *tcp_conn;
 	struct iscsi_sw_tcp_conn *tcp_sw_conn;
-	struct crypto_ahash *tfm;
 
 	cls_conn = iscsi_tcp_conn_setup(cls_session, sizeof(*tcp_sw_conn),
 					conn_idx);
@@ -552,28 +552,23 @@ iscsi_sw_tcp_conn_create(struct iscsi_cls_session *cls_session,
 	tcp_conn = conn->dd_data;
 	tcp_sw_conn = tcp_conn->dd_data;
 
-	tfm = crypto_alloc_ahash("crc32c", 0, CRYPTO_ALG_ASYNC);
-	if (IS_ERR(tfm))
+	tcp_sw_conn->tx_hash.tfm = crypto_alloc_hash("crc32c", 0,
+						     CRYPTO_ALG_ASYNC);
+	tcp_sw_conn->tx_hash.flags = 0;
+	if (IS_ERR(tcp_sw_conn->tx_hash.tfm))
 		goto free_conn;
 
-	tcp_sw_conn->tx_hash = ahash_request_alloc(tfm, GFP_KERNEL);
-	if (!tcp_sw_conn->tx_hash)
-		goto free_tfm;
-	ahash_request_set_callback(tcp_sw_conn->tx_hash, 0, NULL, NULL);
-
-	tcp_sw_conn->rx_hash = ahash_request_alloc(tfm, GFP_KERNEL);
-	if (!tcp_sw_conn->rx_hash)
-		goto free_tx_hash;
-	ahash_request_set_callback(tcp_sw_conn->rx_hash, 0, NULL, NULL);
-
-	tcp_conn->rx_hash = tcp_sw_conn->rx_hash;
+	tcp_sw_conn->rx_hash.tfm = crypto_alloc_hash("crc32c", 0,
+						     CRYPTO_ALG_ASYNC);
+	tcp_sw_conn->rx_hash.flags = 0;
+	if (IS_ERR(tcp_sw_conn->rx_hash.tfm))
+		goto free_tx_tfm;
+	tcp_conn->rx_hash = &tcp_sw_conn->rx_hash;
 
 	return cls_conn;
 
-free_tx_hash:
-	ahash_request_free(tcp_sw_conn->tx_hash);
-free_tfm:
-	crypto_free_ahash(tfm);
+free_tx_tfm:
+	crypto_free_hash(tcp_sw_conn->tx_hash.tfm);
 free_conn:
 	iscsi_conn_printk(KERN_ERR, conn,
 			  "Could not create connection due to crc32c "
@@ -612,14 +607,10 @@ static void iscsi_sw_tcp_conn_destroy(struct iscsi_cls_conn *cls_conn)
 
 	iscsi_sw_tcp_release_conn(conn);
 
-	ahash_request_free(tcp_sw_conn->rx_hash);
-	if (tcp_sw_conn->tx_hash) {
-		struct crypto_ahash *tfm;
-
-		tfm = crypto_ahash_reqtfm(tcp_sw_conn->tx_hash);
-		ahash_request_free(tcp_sw_conn->tx_hash);
-		crypto_free_ahash(tfm);
-	}
+	if (tcp_sw_conn->tx_hash.tfm)
+		crypto_free_hash(tcp_sw_conn->tx_hash.tfm);
+	if (tcp_sw_conn->rx_hash.tfm)
+		crypto_free_hash(tcp_sw_conn->rx_hash.tfm);
 
 	iscsi_tcp_conn_teardown(cls_conn);
 }
@@ -966,7 +957,6 @@ static struct scsi_host_template iscsi_sw_tcp_sht = {
 	.sg_tablesize		= 4096,
 	.max_sectors		= 0xFFFF,
 	.cmd_per_lun		= ISCSI_DEF_CMD_PER_LUN,
-	.eh_timed_out		= iscsi_eh_cmd_timed_out,
 	.eh_abort_handler       = iscsi_eh_abort,
 	.eh_device_reset_handler= iscsi_eh_device_reset,
 	.eh_target_reset_handler = iscsi_eh_recover_target,

@@ -1,11 +1,8 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * CRISv32 kernel startup code.
  *
  * Copyright (C) 2003, Axis Communications AB
  */
-
-#include <linux/init.h>
 
 #define ASSEMBLER_MACROS_ONLY
 
@@ -39,7 +36,7 @@
 	.global nand_boot
 	.global swapper_pg_dir
 
-	__HEAD
+	.text
 tstart:
 	;; This is the entry point of the kernel. The CPU is currently in
 	;; supervisor mode.
@@ -180,7 +177,7 @@ _inflash0:
 
 	;; Put the following in a section so that storage for it can be
 	;; reclaimed after init is finished.
-	__INIT
+	.section ".init.text", "ax"
 
 _inflash:
 
