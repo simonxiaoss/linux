@@ -1247,3 +1247,10 @@ int rndis_filter_close(struct hv_device *dev)
 
 	return rndis_filter_close_device(nvdev->extension);
 }
+
+bool rndis_filter_opened(const struct netvsc_device *nvdev)
+{
+	const struct rndis_device *dev = nvdev->extension;
+
+	return dev->state == RNDIS_DEV_DATAINITIALIZED;
+}

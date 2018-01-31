@@ -56,7 +56,6 @@
 #include <asm/irqdomain.h>
 #include <asm/apic.h>
 #include <linux/msi.h>
-#include <linux/topology.h>
 #include <linux/hyperv.h>
 #include <linux/refcount.h>
 #include <asm/mshyperv.h>
@@ -1120,6 +1119,7 @@ static void hv_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	 */
 	while (!try_wait_for_completion(&comp.comp_pkt.host_event))
 		udelay(100);
+
 	if (comp.comp_pkt.completion_status < 0) {
 		dev_err(&hbus->hdev->device,
 			"Request for interrupt failed: 0x%x",

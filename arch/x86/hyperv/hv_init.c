@@ -91,7 +91,6 @@ int hv_cpu_init(unsigned int cpu)
 	u64 msr_vp_index;
 
 	hv_get_vp_index(msr_vp_index);
-
 	hv_vp_index[smp_processor_id()] = msr_vp_index;
 
 	return 0;

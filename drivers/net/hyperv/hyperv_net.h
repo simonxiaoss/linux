@@ -214,7 +214,7 @@ int rndis_filter_receive(struct hv_device *dev,
 
 int rndis_filter_set_packet_filter(struct rndis_device *dev, u32 new_filter);
 int rndis_filter_set_device_mac(struct hv_device *hdev, char *mac);
-
+bool rndis_filter_opened(const struct netvsc_device *nvdev);
 void netvsc_switch_datapath(struct netvsc_device *nv_dev, bool vf);
 
 #define NVSP_INVALID_PROTOCOL_VERSION	((u32)0xFFFFFFFF)
@@ -674,7 +674,7 @@ struct net_device_context {
 	u8 duplex;
 	u32 speed;
 
-	struct work_struct vf_takeover;
+	struct delayed_work vf_takeover;
 	struct work_struct vf_notify;
 };
 

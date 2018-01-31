@@ -1117,16 +1117,11 @@ static int netvsc_change_mtu(struct net_device *ndev, int mtu)
 	struct net_device *vf_netdev = rtnl_dereference(nvdev->vf_netdev);
 	struct netvsc_device_info device_info;
 	int limit = ETH_DATA_LEN;
+	bool was_opened;
 	int ret = 0;
 
 	if (nvdev == NULL || nvdev->destroy)
 		return -ENODEV;
-
-	if (vf_netdev) {
-		ret = dev_set_mtu(vf_netdev, mtu);
-		if (ret)
-			return ret;
-	}
 
 	if (nvdev->nvsp_version >= NVSP_PROTOCOL_VERSION_2)
 		limit = NETVSC_MTU - ETH_HLEN;
@@ -1134,26 +1129,26 @@ static int netvsc_change_mtu(struct net_device *ndev, int mtu)
 	if (mtu < NETVSC_MTU_MIN || mtu > limit)
 		return -EINVAL;
 
-	ret = netvsc_close(ndev);
-	if (ret)
-		goto out;
+	if (vf_netdev) {
+		ret = dev_set_mtu(vf_netdev, mtu);
+		if (ret)
+			return ret;
+	}
 
-	nvdev->start_remove = true;
+	netif_device_detach(ndev);
+	was_opened = rndis_filter_opened(nvdev);
+	if (was_opened)
+		rndis_filter_close(hdev);
+
 	rndis_filter_device_remove(hdev);
-
 	ndev->mtu = mtu;
 
-	ndevctx->device_ctx = hdev;
-	hv_set_drvdata(hdev, ndev);
-
-	memset(&device_info, 0, sizeof(device_info));
-	device_info.ring_size = ring_size;
-	device_info.num_chn = nvdev->num_chn;
-	device_info.max_num_vrss_chns = max_num_vrss_chns;
 	rndis_filter_device_add(hdev, &device_info);
 
-out:
-	netvsc_open(ndev);
+	if (was_opened)
+		rndis_filter_open(hdev);
+
+	netif_device_attach(ndev);
 
 	return ret;
 }
@@ -1400,32 +1395,16 @@ static int netvsc_vf_join(struct net_device *vf_netdev,
 
 	schedule_work(&ndev_ctx->vf_takeover);
 
+	call_netdevice_notifiers(NETDEV_JOIN, vf_netdev);
+
 	netdev_info(vf_netdev, "joined to %s\n", ndev->name);
+
 	return 0;
 
 upper_link_failed:
 	netdev_rx_handler_unregister(vf_netdev);
 rx_handler_failed:
 	return ret;
-}
-
-static void __netvsc_vf_setup(struct net_device *ndev,
-			      struct net_device *vf_netdev)
-{
-	int ret;
-
-	/* Align MTU of VF with master */
-	ret = dev_set_mtu(vf_netdev, ndev->mtu);
-	if (ret)
-		netdev_warn(vf_netdev,
-			    "unable to change mtu to %u\n", ndev->mtu);
-
-	if (netif_running(ndev)) {
-		ret = dev_open(vf_netdev);
-		if (ret)
-			netdev_warn(vf_netdev,
-				    "unable to open: %d\n", ret);
-	}
 }
 
 /* Setup VF as slave of the synthetic device.
@@ -1439,12 +1418,22 @@ static void netvsc_vf_setup(struct work_struct *w)
 	struct netvsc_device *nvdev = hv_get_drvdata(device_obj);
 	struct net_device *ndev = hv_get_drvdata(device_obj);
 	struct net_device *vf_netdev;
+	int ret;
 
 	rtnl_lock();
 	vf_netdev = rtnl_dereference(nvdev->vf_netdev);
-	if (vf_netdev)
-		__netvsc_vf_setup(ndev, vf_netdev);
-
+	if (vf_netdev) {
+		ret = dev_set_mtu(vf_netdev, nvdev->ndev->mtu);
+		if (ret)
+			netdev_warn(vf_netdev,
+				    "unable to change mtu to %u\n", ndev->mtu);
+		if (netif_running(ndev)) {
+			ret = dev_open(vf_netdev);
+			if (ret)
+				netdev_warn(vf_netdev,
+					    "unable to open: %d\n", ret);
+		}
+	}
 	rtnl_unlock();
 }
 
@@ -1507,6 +1496,9 @@ static int netvsc_register_vf(struct net_device *vf_netdev)
 
 	dev_hold(vf_netdev);
 	rcu_assign_pointer(netvsc_dev->vf_netdev, vf_netdev);
+
+//	call_netdevice_notifiers(NETDEV_UP, vf_netdev);
+
 	return NOTIFY_OK;
 }
 
@@ -1528,7 +1520,6 @@ static int netvsc_vf_up(struct net_device *vf_netdev)
 {
 	struct net_device *ndev;
 	struct netvsc_device *netvsc_dev;
-	const struct ethtool_ops *eth_ops = vf_netdev->ethtool_ops;
 	struct net_device_context *net_device_ctx;
 
 	ndev = get_netvsc_byref(vf_netdev);
@@ -1657,7 +1648,7 @@ static int netvsc_probe(struct hv_device *dev,
 	hv_set_drvdata(dev, net);
 	INIT_DELAYED_WORK(&net_device_ctx->dwork, netvsc_link_change);
 	INIT_WORK(&net_device_ctx->work, do_set_multicast);
-	INIT_WORK(&net_device_ctx->vf_takeover, netvsc_vf_setup);
+	INIT_DELAYED_WORK(&net_device_ctx->vf_takeover, netvsc_vf_setup);
 
 	net->netdev_ops = &device_ops;
 
@@ -1779,8 +1770,9 @@ static int netvsc_netdev_event(struct notifier_block *this,
 	/* Avoid non-Ethernet type devices */
 	if (event_dev->type != ARPHRD_ETHER)
 		return NOTIFY_DONE;
+
 	/* Avoid Vlan dev with same MAC registering as VF */
-	if (event_dev->priv_flags & IFF_802_1Q_VLAN)
+	if (is_vlan_dev(event_dev))
 		return NOTIFY_DONE;
 
 	/* Avoid Bonding master dev with same MAC registering as VF */
